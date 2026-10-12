@@ -10,5 +10,9 @@
 //! 本模块只放宿主私有行为。
 
 pub mod config;
+pub mod lkg;
+pub mod service;
 
 pub use config::{load_from_repo, parse_and_validate, validate, ConfigError};
+pub use lkg::LkgStore;
+pub use service::{LoadOutcome, WorkflowService};

@@ -65,10 +65,32 @@ fn v1_host_meta(conn: &Connection) -> rusqlite::Result<()> {
     )
 }
 
+/// v2（ticket #12）：workflow 配置 last-known-good 缓存，**per-仓库 keyed**
+/// （ADR-0005 §2/§6：LKG 是持久项，落宿主私有 SQLite，不落被编排仓库）。
+/// 表名单一源在 [`crate::workflow::lkg::LKG_TABLE`]。
+fn v2_workflow_config_lkg(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(&format!(
+        "CREATE TABLE IF NOT EXISTS {table} (
+             repo_id     TEXT PRIMARY KEY,
+             config_json TEXT NOT NULL,
+             updated_at  TEXT NOT NULL
+         );",
+        table = crate::workflow::lkg::LKG_TABLE
+    ))
+}
+
 /// 骨架 migration 集：只建 runner 自己的工作表与一张宿主级 key/value 表。
-/// 服务域表由 #13–#15 追加（加法演进，不改这里的历史版本）。
-pub const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "host_meta",
-    up: v1_host_meta,
-}];
+/// 服务域表由 #13–#15 追加（加法演进，不改这里的历史版本）。ticket #12 追加 v2
+/// （workflow 配置 LKG，per-仓库）。
+pub const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "host_meta",
+        up: v1_host_meta,
+    },
+    Migration {
+        version: 2,
+        name: "workflow_config_lkg",
+        up: v2_workflow_config_lkg,
+    },
+];
