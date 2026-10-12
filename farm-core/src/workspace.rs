@@ -198,6 +198,70 @@ const SELECT_COLS: &str = "SELECT ticket_id, spec_id, integration_branch, repo_p
                            worktree_path, worktree_branch, start_point, status, created_at, updated_at \
                            FROM workspace_mapping";
 
+/// 跑一条 git 子命令，非零退出即 [`WorkspaceError::Git`]（带 stderr 便于对账诊断）。
+fn run_git(mut cmd: Command, label: &str) -> Result<(), WorkspaceError> {
+    let out = cmd.output().map_err(|e| WorkspaceError::Git {
+        command: format!("{label} (spawn failed: {e})"),
+        stderr: String::new(),
+    })?;
+    if !out.status.success() {
+        return Err(WorkspaceError::Git {
+            command: label.to_string(),
+            stderr: String::from_utf8_lossy(&out.stderr).trim().to_string(),
+        });
+    }
+    Ok(())
+}
+
+/// 分支是否已存在于源仓库（决定 `git worktree add` 用 `-b` 新建还是直接检出）。
+fn branch_exists(repo: &Path, branch: &str) -> Result<bool, WorkspaceError> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .arg("show-ref")
+        .arg("--verify")
+        .arg("--quiet")
+        .arg(format!("refs/heads/{branch}"))
+        .output()
+        .map_err(|e| WorkspaceError::Git {
+            command: format!("show-ref (spawn failed: {e})"),
+            stderr: String::new(),
+        })?;
+    Ok(out.status.success())
+}
+
+/// 建 worktree：分支已存在则检出它，否则 `-b` 从 `start_point`（缺省 HEAD）新建。
+fn worktree_add(row: &MappingRow) -> Result<(), WorkspaceError> {
+    let repo = Path::new(&row.repo_path);
+    let mut cmd = Command::new("git");
+    cmd.arg("-C")
+        .arg(repo)
+        .arg("worktree")
+        .arg("add")
+        .arg(&row.worktree_path);
+    if branch_exists(repo, &row.worktree_branch)? {
+        cmd.arg(&row.worktree_branch);
+    } else {
+        cmd.arg("-b").arg(&row.worktree_branch);
+        if let Some(sp) = &row.start_point {
+            cmd.arg(sp);
+        }
+    }
+    run_git(cmd, "worktree add")
+}
+
+/// 移除 worktree（`--force`）。
+fn worktree_remove(repo: &Path, worktree_path: &str) -> Result<(), WorkspaceError> {
+    let mut cmd = Command::new("git");
+    cmd.arg("-C")
+        .arg(repo)
+        .arg("worktree")
+        .arg("remove")
+        .arg("--force")
+        .arg(worktree_path);
+    run_git(cmd, "worktree remove")
+}
+
 /// Workspace 服务句柄：持有宿主私有存储句柄（`Clone` 廉价，可被 axum 广泛共享）。
 #[derive(Clone, Debug)]
 pub struct WorkspaceService {
@@ -246,6 +310,51 @@ impl WorkspaceService {
             .map_err(WorkspaceError::Store)?;
         self.find(&req.ticket_id)?
             .ok_or_else(|| WorkspaceError::NotFound(req.ticket_id.clone()))
+    }
+
+    /// **建 worktree**：`git worktree add` → 转 `built`。幂等（已 built 且目录健康则原样返回）。
+    ///
+    /// git 失败时返回错误且行**保持 pending**（write-ahead：映射已持久化，留给 `reconcile`）。
+    pub fn build(&self, ticket_id: &str) -> Result<MappingRow, WorkspaceError> {
+        let row = self
+            .find(ticket_id)?
+            .ok_or_else(|| WorkspaceError::NotFound(ticket_id.to_string()))?;
+        if row.status == MappingStatus::Built && Self::worktree_is_healthy(Path::new(&row.worktree_path)) {
+            return Ok(row);
+        }
+        worktree_add(&row)?;
+        self.set_status(ticket_id, MappingStatus::Built)?;
+        self.find(ticket_id)?
+            .ok_or_else(|| WorkspaceError::NotFound(ticket_id.to_string()))
+    }
+
+    /// **全链路**：write-ahead `reserve` + `build`。git 失败则 pending 行仍在（可被对账重建/标 broken）。
+    pub fn establish(&self, req: &EstablishRequest) -> Result<MappingRow, WorkspaceError> {
+        self.reserve(req)?;
+        self.build(&req.ticket_id)
+    }
+
+    /// **清理**：移除 worktree（尽力而为，git 失败再兜底删目录）并删除映射行。
+    pub fn cleanup(&self, ticket_id: &str) -> Result<(), WorkspaceError> {
+        let row = self
+            .find(ticket_id)?
+            .ok_or_else(|| WorkspaceError::NotFound(ticket_id.to_string()))?;
+        let wt = Path::new(&row.worktree_path);
+        if wt.exists() {
+            let _ = worktree_remove(Path::new(&row.repo_path), &row.worktree_path);
+            if wt.exists() {
+                let _ = std::fs::remove_dir_all(wt);
+            }
+        }
+        self.db
+            .with_conn(|conn| {
+                conn.execute(
+                    "DELETE FROM workspace_mapping WHERE ticket_id = ?1",
+                    [ticket_id],
+                )?;
+                Ok(())
+            })
+            .map_err(WorkspaceError::Store)
     }
 
     /// 按票号查一行。

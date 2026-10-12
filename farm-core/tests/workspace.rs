@@ -111,3 +111,35 @@ fn the_mapping_view_projects_internal_status_to_the_contract_worktree_state() {
     assert_eq!(t14.branch, "farm/t14");
     assert_eq!(t14.path, "/tmp/farm-wt/14");
 }
+
+// ---------------------------------------------------------------------------
+// S2 — 映射创建 → worktree 建立 → 清理 全链路（对 scratch git 仓库跑真实 git CLI）
+// ---------------------------------------------------------------------------
+
+#[test]
+fn establish_builds_the_worktree_and_cleanup_removes_it_the_full_chain() {
+    let (_dir, svc) = service();
+    let repo = scratch_repo();
+    let wt_parent = tempfile::tempdir().expect("worktree parent dir");
+    let worktree_path = wt_parent.path().join("t14");
+    let req = EstablishRequest {
+        spec_id: "spec-10".into(),
+        integration_branch: "implement/spec-10".into(),
+        ticket_id: "14".into(),
+        repo_path: repo.path().to_path_buf(),
+        worktree_path: worktree_path.clone(),
+        worktree_branch: "farm/t14".into(),
+        start_point: Some("HEAD".into()),
+    };
+
+    let row = svc.establish(&req).expect("establish: reserve + git worktree add");
+    assert_eq!(row.status, MappingStatus::Built, "worktree 建成后转 built");
+    assert!(worktree_path.join(".git").exists(), "linked worktree 带 .git 文件");
+    assert!(worktree_path.join("README.md").exists(), "起点内容在工作树里");
+    assert_eq!(svc.status_of("14").expect("status"), Some(MappingStatus::Built));
+
+    svc.cleanup("14").expect("cleanup removes worktree + row");
+    assert!(!worktree_path.exists(), "清理后 worktree 目录没了");
+    assert_eq!(svc.find("14").expect("find"), None, "清理后映射行删掉");
+    assert!(svc.list().expect("list").is_empty());
+}
