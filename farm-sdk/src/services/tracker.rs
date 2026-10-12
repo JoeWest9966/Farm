@@ -59,6 +59,58 @@ pub struct ClaimRequest {
     pub assignee: String,
 }
 
+/// release 请求：交还排他所有权（GLOSSARY：claim 是票据状态，不是技术锁）。
+///
+/// 与 claim 同形：`assignee` 是**交还者**。持着票的是别人 → 闭集 `conflict`
+/// （409，`details.holder` 指名当前持有者）；无人持有 → 幂等空操作
+/// （[`ReleaseOutcome::NotClaimed`）；票不在视图里 → 闭集 `not_found`。
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseRequest {
+    pub issue_id: String,
+    pub assignee: String,
+}
+
+/// release 的结局投影（闭集）。
+///
+/// 只有两种**成功**投影：真的交还了、本来就没人持有。第三种可能（持票的是别人）
+/// 不是结局而是闭集 `conflict` 错误——投影与错误不混在一个枚举里。
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReleaseOutcome {
+    /// 持有者本人释放：之后他人可 claim。
+    Released,
+    /// 无人持有：重复 release 的幂等空操作（不报错，也不写新历史）。
+    NotClaimed,
+}
+
+impl ReleaseOutcome {
+    /// 闭集的权威清单。
+    pub const ALL: [ReleaseOutcome; 2] = [ReleaseOutcome::Released, ReleaseOutcome::NotClaimed];
+
+    /// 契约里出现的字符串形式。
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ReleaseOutcome::Released => "released",
+            ReleaseOutcome::NotClaimed => "not_claimed",
+        }
+    }
+}
+
+impl std::fmt::Display for ReleaseOutcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// release 结果：票 + 结局投影。`holder` 不进契约——release 的目的状态就是无人持有。
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseResponse {
+    pub issue_id: String,
+    pub outcome: ReleaseOutcome,
+}
+
 /// 原子 claim 结果。
 ///
 /// `claimed` 是**成功投影**：抢到（含同一 assignee 的幂等重claim）恒为 `true`。

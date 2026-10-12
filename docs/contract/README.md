@@ -33,9 +33,12 @@
 | --- | --- | --- | --- | --- |
 | tracker | GET | `/v1/tracker/issues` | 归一化 Issue 视图（面板与编排器读同一视图） | 已通：归一化 Issue 视图（#13） |
 | tracker | POST | `/v1/tracker/claims` | 原子 claim（CAS 语义，assignee 即 claim） | 已通：原子 claim（#13） |
-| agent-runner | POST | `/v1/agent-runner/dispatches` | 派发 agent（本地后端 spawn pi --mode rpc） | 占位：`not_implemented` |
-| agent-runner | POST | `/v1/agent-runner/attempts/{attempt_id}/steer` | 向运行中的 attempt 注入指令 | 占位：`not_implemented` |
-| agent-runner | POST | `/v1/agent-runner/attempts/{attempt_id}/abort` | 中止 attempt（abort 探针） | 占位：`not_implemented` |
+| tracker | POST | `/v1/tracker/releases` | release：交还排他所有权（claim 是票据状态，不是技术锁） | 已通：release 交还排他所有权（#22） |
+| agent-runner | POST | `/v1/agent-runner/dispatches` | 派发 agent（本地后端 spawn pi --mode rpc） | 已通：派发 attempt（#16） |
+| agent-runner | POST | `/v1/agent-runner/attempts/{attempt_id}/steer` | 向运行中的 attempt 注入指令 | 已通：steer 注入（#16） |
+| agent-runner | POST | `/v1/agent-runner/attempts/{attempt_id}/abort` | 中止 attempt（abort 探针） | 已通：abort 探针（#16） |
+| agent-runner | POST | `/v1/agent-runner/attempts/{attempt_id}/follow-up` | follow_up：等 attempt 停下才送达的追加任务 | 已通：follow_up 注入（#22） |
+| agent-runner | POST | `/v1/agent-runner/attempts/{attempt_id}/clear-queue` | clear_queue：清掉 attempt 上排队的注入，回报清了几条 | 已通：clear_queue（#22） |
 | merge | POST | `/v1/merge/proposals` | agent 提议 merge（宿主校验后执行） | 占位：`not_implemented` |
 | workspace | GET | `/v1/workspace/mappings` | spec ↔ 集成分支 ↔ worktrees 映射 | 已通：workspace 映射视图（#14） |
 | events | GET | `/v1/events/stream` | WS 单连接订阅事件总线（握手同样验 token） | 已通：WS 单连接事件投影（#15） |

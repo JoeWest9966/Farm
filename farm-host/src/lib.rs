@@ -48,9 +48,15 @@ const TRACKER_CLAIMS_PATH: &str = "/v1/tracker/claims";
 const WORKSPACE_MAPPINGS_PATH: &str = "/v1/workspace/mappings";
 
 /// Agent-Runner 三条路由（ticket #16 打通）：派发 + steer/abort 注入。
+/// #22 追加 follow-up / clear-queue 两条注入路由（面板 HITL：改道、放弃改道）。
 const AGENT_DISPATCH_PATH: &str = "/v1/agent-runner/dispatches";
 const AGENT_STEER_PATH: &str = "/v1/agent-runner/attempts/{attempt_id}/steer";
 const AGENT_ABORT_PATH: &str = "/v1/agent-runner/attempts/{attempt_id}/abort";
+const AGENT_FOLLOW_UP_PATH: &str = "/v1/agent-runner/attempts/{attempt_id}/follow-up";
+const AGENT_CLEAR_QUEUE_PATH: &str = "/v1/agent-runner/attempts/{attempt_id}/clear-queue";
+
+/// Tracker 的 release 路由（ticket #22 打通）：交还排他所有权。
+const TRACKER_RELEASE_PATH: &str = "/v1/tracker/releases";
 
 /// 装配宿主路由：三个面 + 统一的闭集 404/405 兜底。
 ///
@@ -65,10 +71,13 @@ pub fn build_router(state: AppState) -> Router {
             EVENTS_HISTORY_PATH => get(events::events_history),
             TRACKER_ISSUES_PATH => get(contract::tracker_issues),
             TRACKER_CLAIMS_PATH => post(contract::tracker_claims),
+            TRACKER_RELEASE_PATH => post(contract::tracker_release),
             WORKSPACE_MAPPINGS_PATH => get(workspace::list_mappings),
             AGENT_DISPATCH_PATH => post(agent_runner::dispatch),
             AGENT_STEER_PATH => post(agent_runner::steer),
             AGENT_ABORT_PATH => post(agent_runner::abort),
+            AGENT_FOLLOW_UP_PATH => post(agent_runner::follow_up),
+            AGENT_CLEAR_QUEUE_PATH => post(agent_runner::clear_queue),
             _ => match route.method {
                 "GET" => get(contract::not_implemented_placeholder),
                 "POST" => post(contract::not_implemented_placeholder),

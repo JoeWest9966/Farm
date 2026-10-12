@@ -10,8 +10,12 @@ use axum::extract::{MatchedPath, State};
 use axum::http::{Method, Uri};
 use axum::Json;
 use farm_core::AppState;
+use farm_core::tracker::ReleaseOutcome as CoreReleaseOutcome;
 use farm_sdk::events::NewEvent;
-use farm_sdk::services::tracker::{ClaimRequest, ClaimResponse, IssueListResponse, IssueView};
+use farm_sdk::services::tracker::{
+    ClaimRequest, ClaimResponse, IssueListResponse, IssueView, ReleaseOutcome, ReleaseRequest,
+    ReleaseResponse,
+};
 use farm_sdk::{
     is_compatible, ContractError, EventKind, HandshakeRequest, HandshakeResponse, ADMIN_PREFIX,
     CONTRACT_PREFIX, CONTRACT_VERSION, HANDSHAKE_PATH, HOST_VERSION,
@@ -96,6 +100,49 @@ pub async fn tracker_claims(
         issue_id: claimed.issue_id,
         claimed: true,
         holder: claimed.assignee,
+    }))
+}
+
+/// `POST /v1/tracker/releases`：release——交还排他所有权（ticket #22 打通）。
+///
+/// GLOSSARY：claim 是票据状态，不是技术锁，所以交还也是一等操作。面板与编排器
+/// 同路：持有者本人释放 → 200 + [`ReleaseResponse`]；无人持有 → 幂等 200
+/// （[`ReleaseOutcome::NotClaimed`）；持票的是别人 → 闭集 `conflict`（409）。
+///
+/// 不另发事件：契约事件闭集里没有「claim 交还」这一类（新增种类是契约变更），
+/// 交还的权威投影就是**归一化视图本身**——面板在每次操作后重取视图即可。
+pub async fn tracker_release(
+    State(state): State<AppState>,
+    body: Bytes,
+) -> Result<Json<ReleaseResponse>, ApiError> {
+    let request: ReleaseRequest = serde_json::from_slice(&body).map_err(|e| {
+        ApiError(ContractError::invalid_request(format!(
+            "malformed release request: {e}"
+        )))
+    })?;
+    if request.issue_id.trim().is_empty() || request.assignee.trim().is_empty() {
+        return Err(ApiError(ContractError::invalid_request(
+            "release requires a non-empty issue_id and assignee",
+        )));
+    }
+
+    let outcome = state
+        .tracker
+        .release(&request.issue_id, &request.assignee)
+        .map_err(ApiError::from)?;
+
+    Ok(Json(ReleaseResponse {
+        issue_id: request.issue_id,
+        outcome: match outcome {
+            CoreReleaseOutcome::Released => ReleaseOutcome::Released,
+            CoreReleaseOutcome::NotClaimed => ReleaseOutcome::NotClaimed,
+            // 另两种可能已在 TrackerError 里投影成闭集错误，走不到这里。
+            other => {
+                return Err(ApiError(ContractError::internal(format!(
+                    "release outcome {other:?} must have been a closed-set error"
+                ))))
+            }
+        },
     }))
 }
 

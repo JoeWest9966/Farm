@@ -30,8 +30,8 @@ pub use handshake::{
 pub use routes::{contract_path, AdminRouteSpec, RouteSpec, ADMIN_ROUTES, CONTRACT_ROUTES};
 pub use services::ServiceName;
 pub use services::agent_runner::{
-    AbortRequest, AbortResponse, AttemptState, DispatchRequest, DispatchResponse, Disposition,
-    SteerRequest, SteerResponse,
+    AbortRequest, AbortResponse, AttemptState, ClearQueueResponse, DispatchRequest, DispatchResponse,
+    Disposition, SteerRequest, SteerResponse,
 };
 pub use workflow::{
     EffectiveSource, LastKnownGoodInfo, ProjectionSwitches, RetryBackoff, WorkflowConfig,

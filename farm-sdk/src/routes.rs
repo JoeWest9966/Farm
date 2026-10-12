@@ -36,6 +36,12 @@ pub const CONTRACT_ROUTES: &[RouteSpec] = &[
         path: "/v1/tracker/claims",
         summary: "原子 claim（CAS 语义，assignee 即 claim）",
     },
+    RouteSpec {
+        service: ServiceName::Tracker,
+        method: "POST",
+        path: "/v1/tracker/releases",
+        summary: "release：交还排他所有权（claim 是票据状态，不是技术锁）",
+    },
     // --- Agent-Runner ---
     RouteSpec {
         service: ServiceName::AgentRunner,
@@ -54,6 +60,18 @@ pub const CONTRACT_ROUTES: &[RouteSpec] = &[
         method: "POST",
         path: "/v1/agent-runner/attempts/{attempt_id}/abort",
         summary: "中止 attempt（abort 探针）",
+    },
+    RouteSpec {
+        service: ServiceName::AgentRunner,
+        method: "POST",
+        path: "/v1/agent-runner/attempts/{attempt_id}/follow-up",
+        summary: "follow_up：等 attempt 停下才送达的追加任务",
+    },
+    RouteSpec {
+        service: ServiceName::AgentRunner,
+        method: "POST",
+        path: "/v1/agent-runner/attempts/{attempt_id}/clear-queue",
+        summary: "clear_queue：清掉 attempt 上排队的注入，回报清了几条",
     },
     // --- Merge 服务 ---
     RouteSpec {

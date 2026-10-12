@@ -164,6 +164,26 @@
       "title": "ClaimResponse",
       "type": "object"
     },
+    "ClearQueueResponse": {
+      "additionalProperties": false,
+      "description": "`clear_queue` 的受理结果：清掉挂在 attempt 上的待注入（steering / followUp /\n被推迟的注入），回报清了几条。\n\nattempt 不在跑 → 闭集 `conflict`（attempt 已收尾，没什么可清）；attempt 不存在\n→ 闭集 `not_found`。面板的 HITL 输入框旁边用它丢弃排队中的注入。",
+      "properties": {
+        "attempt_id": {
+          "type": "string"
+        },
+        "cleared": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "attempt_id",
+        "cleared"
+      ],
+      "title": "ClearQueueResponse",
+      "type": "object"
+    },
     "ClientInfo": {
       "additionalProperties": false,
       "description": "客户端自描述。",
@@ -907,6 +927,58 @@
         }
       },
       "title": "ProjectionSwitches",
+      "type": "object"
+    },
+    "ReleaseOutcome": {
+      "description": "release 的结局投影（闭集）。\n\n只有两种**成功**投影：真的交还了、本来就没人持有。第三种可能（持票的是别人）\n不是结局而是闭集 `conflict` 错误——投影与错误不混在一个枚举里。",
+      "oneOf": [
+        {
+          "const": "released",
+          "description": "持有者本人释放：之后他人可 claim。",
+          "type": "string"
+        },
+        {
+          "const": "not_claimed",
+          "description": "无人持有：重复 release 的幂等空操作（不报错，也不写新历史）。",
+          "type": "string"
+        }
+      ],
+      "title": "ReleaseOutcome"
+    },
+    "ReleaseRequest": {
+      "additionalProperties": false,
+      "description": "release 请求：交还排他所有权（GLOSSARY：claim 是票据状态，不是技术锁）。\n\n与 claim 同形：`assignee` 是**交还者**。持着票的是别人 → 闭集 `conflict`\n（409，`details.holder` 指名当前持有者）；无人持有 → 幂等空操作\n（[`ReleaseOutcome::NotClaimed`）；票不在视图里 → 闭集 `not_found`。",
+      "properties": {
+        "assignee": {
+          "type": "string"
+        },
+        "issue_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "issue_id",
+        "assignee"
+      ],
+      "title": "ReleaseRequest",
+      "type": "object"
+    },
+    "ReleaseResponse": {
+      "additionalProperties": false,
+      "description": "release 结果：票 + 结局投影。`holder` 不进契约——release 的目的状态就是无人持有。",
+      "properties": {
+        "issue_id": {
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/ReleaseOutcome"
+        }
+      },
+      "required": [
+        "issue_id",
+        "outcome"
+      ],
+      "title": "ReleaseResponse",
       "type": "object"
     },
     "RetryBackoff": {
