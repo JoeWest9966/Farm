@@ -505,3 +505,100 @@ async fn the_service_control_route_is_guarded_by_the_admin_token() {
         .expect("oneshot");
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }
+
+// ---------------------------------------------------------------------------
+// 边界负向：契约 API 无法触达管理面操作（ADR-0002 §1：边界分明，不是私有后门）
+// ---------------------------------------------------------------------------
+
+/// 带 op token、指定方法的请求（负向测试用）。
+fn op_token_request_at(method: Method, uri: &str) -> Request<Body> {
+    Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("x-farm-token", OP_TOKEN)
+        .body(Body::empty())
+        .expect("request")
+}
+
+#[test]
+fn the_contract_face_and_the_admin_face_live_under_disjoint_prefixes() {
+    use farm_sdk::{ADMIN_ROUTES, CONTRACT_ROUTES, HANDSHAKE_PATH};
+    for route in CONTRACT_ROUTES {
+        assert!(route.path.starts_with("/v1"), "契约路由须在 /v1 下：{}", route.path);
+        assert!(!route.path.starts_with("/admin"), "契约面不得伸进管理面前缀：{}", route.path);
+    }
+    assert!(!HANDSHAKE_PATH.starts_with("/admin"), "握手路由不属管理面");
+    for route in ADMIN_ROUTES {
+        assert!(route.path.starts_with("/admin"), "管理面路由须在 /admin 下：{}", route.path);
+    }
+}
+
+#[tokio::test]
+async fn the_contract_face_has_no_route_for_host_admin_operations() {
+    // 即便带上合法 op token，契约面也没有插件/服务/tracker-config 这些管理操作的入口——
+    // 它们不是 /v1 路由 → not_found。管理面操作只能经 /admin + 管理 token 触达。
+    let app = admin_app();
+    for (method, uri) in [
+        (Method::GET, "/v1/plugins"),
+        (Method::POST, "/v1/plugins/fake-plugin/recover"),
+        (Method::GET, "/v1/services"),
+        (Method::POST, "/v1/services/tracker/stop"),
+        (Method::GET, "/v1/tracker/provider"),
+        (Method::POST, "/v1/tracker/provider"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(op_token_request_at(method.clone(), uri))
+            .await
+            .expect("oneshot");
+        assert_eq!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "{method} {uri} 不应作为契约路由存在（管理操作不经契约面）"
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_admin_token_opens_no_contract_route() {
+    // 管理 token 递到契约路由：契约面只认 op token → unauthorized。
+    let app = admin_app();
+    for uri in ["/v1/tracker/issues", "/v1/workspace/mappings", "/v1/events/history"] {
+        let response = app
+            .clone()
+            .oneshot(admin_request(Method::GET, uri, Some(ADMIN_TOKEN)))
+            .await
+            .expect("oneshot");
+        assert_eq!(
+            response.status(),
+            StatusCode::UNAUTHORIZED,
+            "管理 token 打不开契约路由 {uri}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_op_token_opens_no_admin_route() {
+    // op token 递到任一管理面路由：越面 → forbidden。
+    let app = admin_app();
+    for (method, uri) in [
+        (Method::GET, "/admin/plugins"),
+        (Method::GET, "/admin/status"),
+        (Method::GET, "/admin/services"),
+        (Method::GET, "/admin/tracker/provider"),
+        (Method::POST, "/admin/plugins/fake-plugin/recover"),
+        (Method::POST, "/admin/services/tracker/stop"),
+        (Method::POST, "/admin/services/tracker/start"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(op_token_request_at(method.clone(), uri))
+            .await
+            .expect("oneshot");
+        assert_eq!(
+            response.status(),
+            StatusCode::FORBIDDEN,
+            "op token 打不开管理路由 {method} {uri}"
+        );
+    }
+}

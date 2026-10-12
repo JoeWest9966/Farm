@@ -259,6 +259,21 @@ fn admin_route_schema() -> serde_json::Value {
 }
 
 /// 渲染 `README.md`：路由表 + 闭集清单（人读的契约摘要）。
+/// 宿主管理 API 路由的本票状态（随 #23 落地从「占位」变「已通」）。
+fn admin_route_status(route: &AdminRouteSpec) -> &'static str {
+    match route.path {
+        "/admin/plugins" => "已通：插件监督状态投影（#23 接 #19）",
+        "/admin/plugins/{id}/recover" => "已通：恢复隔离/停机插件（#23）",
+        "/admin/status" => "已通：管理面自描述",
+        "/admin/workflow/config/{repo_id}" => "已通：workflow 配置 + LKG 查询（#12）",
+        "/admin/tracker/provider" => "已通：tracker provider 配置 view/set（#23）",
+        "/admin/services" => "已通：五服务启停状态（#23）",
+        "/admin/services/{name}/stop" => "已通：停机一个服务（#23）",
+        "/admin/services/{name}/start" => "已通：启动一个服务（#23）",
+        _ => "占位：`not_implemented`",
+    }
+}
+
 pub fn render_readme_md() -> String {
     let mut md = String::new();
     md.push_str("# Farm 编排器契约（orchestrator contract）\n\n");
@@ -315,15 +330,23 @@ pub fn render_readme_md() -> String {
     }
     md.push('\n');
 
-    md.push_str("## 宿主管理 API（host admin API，接口位）\n\n");
-    md.push_str(&format!("独立前缀 `{ADMIN_PREFIX}`，独立 token header `X-Farm-Admin-Token`。\n"));
-    md.push_str("把 op token 递到管理面同样得到 `unauthorized`——两个 token 不是同一个。\n\n");
+    md.push_str("## 宿主管理 API（host admin API，#23）\n\n");
+    md.push_str(&format!(
+        "独立前缀 `{ADMIN_PREFIX}`，独立 token header `X-Farm-Admin-Token`——**管理 token ≠ 操作 token**\n"
+    ));
+    md.push_str("（spec 新增裁决）。与编排器契约**边界分明**：管理面管宿主自身（插件装卸/恢复、tracker provider\n");
+    md.push_str("配置、服务启停），契约面管编排原语；契约 API 无法触达任何管理面操作（不是私有后门）。\n\n");
+    md.push_str("鉴权（`require_admin_token`）：管理 token 命中 → 放行；op token 递到管理面 → `forbidden`（403，\n");
+    md.push_str("已鉴权但越面）；缺 / 错管理 token → `unauthorized`（401，同码不供预言机）；未配管理 token → 管理面禁用。\n\n");
     md.push_str("| 方法 | 路径 | 说明 | 本票状态 |\n");
     md.push_str("| --- | --- | --- | --- |\n");
     for route in ADMIN_ROUTES {
         md.push_str(&format!(
-            "| {} | `{}` | {} | 占位：`not_implemented` |\n",
-            route.method, route.path, route.summary
+            "| {} | `{}` | {} | {} |\n",
+            route.method,
+            route.path,
+            route.summary,
+            admin_route_status(route)
         ));
     }
     md.push('\n');

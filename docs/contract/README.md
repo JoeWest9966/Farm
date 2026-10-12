@@ -44,22 +44,26 @@
 | events | GET | `/v1/events/stream` | WS 单连接订阅事件总线（握手同样验 token） | 已通：WS 单连接事件投影（#15） |
 | events | GET | `/v1/events/history` | 事件历史查询（有界保留窗口） | 已通：事件历史快照 API（#15） |
 
-## 宿主管理 API（host admin API，接口位）
+## 宿主管理 API（host admin API，#23）
 
-独立前缀 `/admin`，独立 token header `X-Farm-Admin-Token`。
-把 op token 递到管理面同样得到 `unauthorized`——两个 token 不是同一个。
+独立前缀 `/admin`，独立 token header `X-Farm-Admin-Token`——**管理 token ≠ 操作 token**
+（spec 新增裁决）。与编排器契约**边界分明**：管理面管宿主自身（插件装卸/恢复、tracker provider
+配置、服务启停），契约面管编排原语；契约 API 无法触达任何管理面操作（不是私有后门）。
+
+鉴权（`require_admin_token`）：管理 token 命中 → 放行；op token 递到管理面 → `forbidden`（403，
+已鉴权但越面）；缺 / 错管理 token → `unauthorized`（401，同码不供预言机）；未配管理 token → 管理面禁用。
 
 | 方法 | 路径 | 说明 | 本票状态 |
 | --- | --- | --- | --- |
-| GET | `/admin/plugins` | 插件清单与状态（#19 监督状态 → PluginSummary） | 占位：`not_implemented` |
-| POST | `/admin/plugins/{id}/recover` | 恢复隔离/停机的插件（GLOSSARY「隔离」一键恢复，#19 recover） | 占位：`not_implemented` |
-| GET | `/admin/status` | 宿主管理面自描述（契约版本 + 五服务） | 占位：`not_implemented` |
-| GET | `/admin/tracker/provider` | 查询当前 tracker provider / adapter 配置（adapter 选择，#23） | 占位：`not_implemented` |
-| POST | `/admin/tracker/provider` | 设置 tracker provider / adapter（adapter 选择，#23） | 占位：`not_implemented` |
-| GET | `/admin/services` | 五服务启停状态（服务启停控制面，#23） | 占位：`not_implemented` |
-| POST | `/admin/services/{name}/stop` | 停机一个服务（服务启停，#23；宿主持有开关，发 needs_attention） | 占位：`not_implemented` |
-| POST | `/admin/services/{name}/start` | 启动一个服务（服务启停，#23） | 占位：`not_implemented` |
-| GET | `/admin/workflow/config/{repo_id}` | 查询某被编排仓库当前生效的 workflow 配置与 LKG 状态（ticket #12） | 占位：`not_implemented` |
+| GET | `/admin/plugins` | 插件清单与状态（#19 监督状态 → PluginSummary） | 已通：插件监督状态投影（#23 接 #19） |
+| POST | `/admin/plugins/{id}/recover` | 恢复隔离/停机的插件（GLOSSARY「隔离」一键恢复，#19 recover） | 已通：恢复隔离/停机插件（#23） |
+| GET | `/admin/status` | 宿主管理面自描述（契约版本 + 五服务） | 已通：管理面自描述 |
+| GET | `/admin/tracker/provider` | 查询当前 tracker provider / adapter 配置（adapter 选择，#23） | 已通：tracker provider 配置 view/set（#23） |
+| POST | `/admin/tracker/provider` | 设置 tracker provider / adapter（adapter 选择，#23） | 已通：tracker provider 配置 view/set（#23） |
+| GET | `/admin/services` | 五服务启停状态（服务启停控制面，#23） | 已通：五服务启停状态（#23） |
+| POST | `/admin/services/{name}/stop` | 停机一个服务（服务启停，#23；宿主持有开关，发 needs_attention） | 已通：停机一个服务（#23） |
+| POST | `/admin/services/{name}/start` | 启动一个服务（服务启停，#23） | 已通：启动一个服务（#23） |
+| GET | `/admin/workflow/config/{repo_id}` | 查询某被编排仓库当前生效的 workflow 配置与 LKG 状态（ticket #12） | 已通：workflow 配置 + LKG 查询（#12） |
 
 ## 闭集错误码（closed-set error codes）
 
