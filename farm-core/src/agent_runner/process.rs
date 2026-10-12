@@ -8,10 +8,9 @@
 
 use std::path::PathBuf;
 use std::process::Stdio;
-use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::io::AsyncBufReadExt;
+use tokio::io::AsyncWriteExt;
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -21,6 +20,19 @@ use super::credentials::EnvPolicy;
 use super::rpc::{CommandKind, Frame, FrameReader, RpcCommand};
 use crate::error::CoreError;
 use crate::now_rfc3339;
+
+/// 写一行 JSONL：内容 + 且只补一个 `\n`，再 flush。
+async fn write_line(stdin: &mut ChildStdin, line: &[u8]) -> Result<(), CoreError> {
+    stdin
+        .write_all(line)
+        .await
+        .map_err(|source| CoreError::Io(source))?;
+    stdin
+        .write_all(b"\n")
+        .await
+        .map_err(|source| CoreError::Io(source))?;
+    stdin.flush().await.map_err(CoreError::Io)
+}
 
 /// spawn 计划：程序、参数、环境、cwd（测试把 `program` 指向 fake pi）。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -138,9 +150,11 @@ impl PiProcess {
 
         let mut child = command.spawn().map_err(|source| CoreError::Io(source))?;
         let stdin = child.stdin.take();
+        // ChildStdout 不是 AsyncBufRead：包一层 BufReader，read_until(b'\n') 才可用。
         let stdout = child.stdout.take().ok_or_else(|| {
             CoreError::Io(std::io::Error::other("pi child has no stdout pipe"))
         })?;
+        let stdout = tokio::io::BufReader::new(stdout);
 
         // 读循环：read_until(b'\n') 取帧，送进无界通道。
         // 通道断开（EOF）即「读循环健康度」信号，由判据阶梯解释。
@@ -187,6 +201,18 @@ impl PiProcess {
         }
     }
 
+    /// 把拆开的部件装回来：监督循环里 `select!` 不能同时可变借用同一个结构体，
+    /// 于是「写 stdin」与「读帧」要能来回切换；这条就是那条回程。
+    pub fn from_parts(parts: PiProcessParts) -> Self {
+        Self {
+            child: parts.child,
+            stdin: parts.stdin,
+            frames: parts.frames,
+            read_loop: parts.read_loop,
+            plan: parts.plan,
+        }
+    }
+
     /// 写一条命令（JSONL，帧尾只补 `\n`）。
     pub async fn send(&mut self, command: &RpcCommand) -> Result<(), CoreError> {
         self.send_kind(&command.id, command.kind.clone()).await
@@ -208,22 +234,12 @@ impl PiProcess {
                 "pi stdin is closed",
             ))
         })?;
-        tokio::io::AsyncWriteExt::write_all(stdin, &line)
-            .await
-            .map_err(|source| CoreError::Io(source))?;
-        tokio::io::AsyncWriteExt::write_all(stdin, b"\n")
-            .await
-            .map_err(|source| CoreError::Io(source))?;
-        tokio::io::AsyncWriteExt::flush(stdin)
-            .await
-            .map_err(|source| CoreError::Io(source))?;
-        Ok(())
+        write_line(stdin, &line).await
     }
 
     /// 关 stdin（请求有序停机）。
     pub async fn close_stdin(&mut self) {
         if let Some(mut stdin) = self.stdin.take() {
-            use tokio::io::AsyncWriteExt;
             let _ = stdin.flush().await;
             drop(stdin);
         }
@@ -240,7 +256,7 @@ impl PiProcess {
 
 /// 启动探测：`get_state`，拿版本与会话 id。
 ///
-/// 0.84.3 的 `get_state` 不带版本字段 → 记偏差；探测超时也记偏差。**都不让 spawn 失败**。
+/// 0.84.3 的 `get_state` 不带版本字段 -> 记偏差；探测超时也记偏差。**都不让 spawn 失败**。
 pub async fn probe_version(
     parts: &mut PiProcessParts,
     expected: &str,
@@ -248,34 +264,78 @@ pub async fn probe_version(
 ) -> (PiVersionProbe, Vec<Vec<u8>>) {
     let mut probe = PiVersionProbe::new(expected);
     let request_id = format!("probe-{}", std::process::id());
-    let command = RpcCommand {
-        id: request_id.clone(),
-        kind: CommandKind::GetState,
+    let (response, leftovers) = round_trip(
+        parts,
+        RpcCommand {
+            id: request_id,
+            kind: CommandKind::GetState,
+        },
+        timeout,
+    )
+    .await;
+
+    let Some(response) = response else {
+        // 探测没拿到回答（stdin 写不进去 / 超时 / stdout 提前关闭）：一律记偏差。
+        probe.note_deviation(
+            "get_state probe did not answer; the wire protocol is used as documented (1.0.2)",
+        );
+        return (probe, leftovers);
     };
+    if !response.success {
+        probe.note_deviation(format!(
+            "get_state answered success=false: {}",
+            response.error.as_deref().unwrap_or("<no error text>")
+        ));
+    }
+    if let Some(data) = &response.data {
+        probe.reported = data
+            .get("version")
+            .or_else(|| data.get("piVersion"))
+            .or_else(|| data.get("rpcVersion"))
+            .or_else(|| data.get("protocolVersion"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        probe.session_id = data
+            .get("sessionId")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+    }
+    match &probe.reported {
+        Some(reported) if reported == expected => {}
+        Some(reported) => probe.note_deviation(format!(
+            "pi reports version {reported}; farm pins the documented {expected} wire protocol - deviations are recorded, not enforced"
+        )),
+        None => probe.note_deviation(format!(
+            "pi did not report a version in get_state; farm pins the documented {expected} wire protocol - deviations are recorded, not enforced"
+        )),
+    }
+    (probe, leftovers)
+}
+
+/// 一发一收：把命令写进 stdin，等到配对的那条响应。
+///
+/// 返回 `(响应, 等待期间错过的帧)`。错过的帧不能丢----它们可能是 `agent_start`
+/// 或权威 `message_end`（判据与记账的输入），调用方必须回放。
+/// 没有 stdin / 写失败 / 超时 / stdout 关闭 -> `(None, leftovers)`（记录，不致命）。
+pub async fn round_trip(
+    parts: &mut PiProcessParts,
+    command: RpcCommand,
+    timeout: Duration,
+) -> (Option<super::rpc::RpcResponse>, Vec<Vec<u8>>) {
+    let command_name = command.kind.name();
     let line = match serde_json::to_vec(&command) {
         Ok(line) => line,
         Err(e) => {
-            probe.note_deviation(format!("get_state probe could not serialize: {e}"));
-            return (probe, Vec::new());
+            tracing::warn!(target: "agent_runner", command = command_name, error = %e, "rpc command did not serialize");
+            return (None, Vec::new());
         }
     };
-    let sent = match parts.stdin.as_mut() {
-        Some(stdin) => {
-            use tokio::io::AsyncWriteExt;
-            stdin
-                .write_all(&line)
-                .await
-                .and_then(|_| stdin.write_all(b"\n"))
-                .await
-                .and_then(|_| stdin.flush())
-                .await
-                .is_ok()
-        }
+    let written = match parts.stdin.as_mut() {
+        Some(stdin) => write_line(stdin, &line).await.is_ok(),
         None => false,
     };
-    if !sent {
-        probe.note_deviation("get_state probe could not be written to pi stdin");
-        return (probe, Vec::new());
+    if !written {
+        return (None, Vec::new());
     }
 
     let deadline = tokio::time::Instant::now() + timeout;
@@ -283,57 +343,24 @@ pub async fn probe_version(
     loop {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         if remaining.is_zero() {
-            probe.note_deviation(format!(
-                "get_state probe timed out after {}ms",
-                timeout.as_millis()
-            ));
-            return (probe, leftovers);
+            return (None, leftovers);
         }
         match tokio::time::timeout(remaining, parts.frames.recv()).await {
             Ok(Some(frame)) => match super::rpc::parse_frame(&frame) {
-                Frame::Response(response) if response.command == "get_state" => {
-                    if let Some(data) = &response.data {
-                        probe.reported = data
-                            .get("version")
-                            .or_else(|| data.get("piVersion"))
-                            .or_else(|| data.get("rpcVersion"))
-                            .or_else(|| data.get("protocolVersion"))
-                            .and_then(|v| v.as_str())
-                            .map(str::to_string);
-                        probe.session_id = data
-                            .get("sessionId")
-                            .and_then(|v| v.as_str())
-                            .map(str::to_string);
-                    }
-                    match &probe.reported {
-                        Some(reported) if reported == expected => {}
-                        Some(reported) => probe.note_deviation(format!(
-                            "pi reports version {reported}; farm pins the documented {expected} wire protocol — deviations are recorded, not enforced"
-                        )),
-                        None => probe.note_deviation(format!(
-                            "pi did not report a version in get_state; farm pins the documented {expected} wire protocol — deviations are recorded, not enforced"
-                        )),
-                    }
-                    return (probe, leftovers);
+                Frame::Response(response) if response.command == command_name => {
+                    return (Some(response), leftovers);
                 }
+                // 别的响应 / 事件帧：先存着，交还调用方回放（不丢帧）。
                 _ => leftovers.push(frame),
             },
-            Ok(None) => {
-                probe.note_deviation("pi stdout closed before the get_state probe answered");
-                return (probe, leftovers);
-            }
-            Err(_) => {
-                probe.note_deviation(format!(
-                    "get_state probe timed out after {}ms",
-                    timeout.as_millis()
-                ));
-                return (probe, leftovers);
-            }
+            Ok(None) => return (None, leftovers),
+            Err(_) => return (None, leftovers),
         }
     }
 }
 
 /// 从 pi 的 usage JSON 里取一个数（探测/诊断用）。
+#[allow(dead_code)]
 pub fn usage_total(value: &serde_json::Value) -> Option<u64> {
     Usage::from_pi_json(value).map(|usage| usage.total())
 }

@@ -12,7 +12,7 @@ TDD 红→绿，竖切片，每片一次 checkpoint commit。
 | 版本探测 | done（替身侧） | `get_state` 的 `version`；缺字段/版本不符只记录偏差 |
 | clear_queue 往返 | done（替身侧） | 宿主侧 API 待 service 片 |
 | env 只进 pi 子进程 | done（替身侧） | 宿主侧 `credentials::EnvPolicy` 待 credentials 片 |
-| process（spawn + 读循环） | pending | |
+| process（spawn + 读循环） | done | `PiProcess::{spawn,send,close_stdin,kill,wait}` + `probe_version`/`round_trip`；读循环 = `read_until(b'\n')`；三段式收尾 |
 | 判据阶梯四梯 | pending | 读循环健康度前置 / 两口钟 / abort 探针 / fork 找回 |
 | 完成双条件 | pending | `agent_settled` + 最后权威 assistant `stopReason==="stop"` |
 | token 流式记账 | pending | 绝对累计、宁少报不虚报、`parentToolCallId` 嵌套用量 |
@@ -42,4 +42,17 @@ TDD 红→绿，竖切片，每片一次 checkpoint commit。
 
 ## 剩余（remaining）
 
-slice 2 起：process → ladder → accounting → store → service → credentials → 宿主路由 → 真 pi 冒烟。
+## 已完成（追加）
+
+- **slice 1（process）** `feat(agent-runner): pi 子进程 spawn + 版本探测 + 读循环`
+  - `process.rs` 接入 `mod.rs`（此前是未编译的孤儿文件）；`ChildStdout` 不是 `AsyncBufRead`
+    → 包 `tokio::io::BufReader`，读循环只按 `\n` 取帧（`rpc::FrameReader`）。
+  - `probe_version` 收敛到通用 `round_trip`（写命令 → 等配对响应 → **错过的帧原样回放**，
+    不丢 `agent_start`/`message_end`）。缺版本/版本不符/探测无答 → 记偏差，不断失败。
+  - `credentials::EnvPolicy::apply` 改泛型在 `EnvTarget` 上（`std`/`tokio` 两种 Command 都能接；
+    原签名收 `tokio::process::Command` 编不过，这是本片接上的第一个洞）。
+  - 测试：`tests/agent_runner_process.rs` 7 条，全绿。
+
+## 剩余（remaining）
+
+ladder → accounting 接线 → store(v6) → service → credentials 接线 → 宿主路由 → 真 pi 冒烟。

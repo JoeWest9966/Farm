@@ -22,6 +22,7 @@
 
 pub mod accounting;
 pub mod credentials;
+pub mod process;
 pub mod rpc;
 
 /// fake pi RPC 测试替身的路径（测试与 #26 一致性套件共用）。

@@ -11,9 +11,36 @@
 //! 2. 取凭据失败 → spawn 失败 → `needs_attention`（不是 attempt failed 的重试语义）；
 //! 3. 环境策略可被收窄成「只给这些变量」（测试与最小权限面用）。
 
-use std::process::Command;
+use std::process::Command as StdCommand;
 
 use crate::error::CoreError;
+
+/// 环境注入目标：`std` 与 `tokio` 两种 `Command` 都能接（凭据只往这里走）。
+///
+/// 宿主 spawn pi 子进程用的是 `tokio::process::Command`（读循环是异步的），而
+/// `EnvPolicy` 的判据与测试不关心是哪一种——故按能力抽象，不按类型抽象。
+pub trait EnvTarget {
+    fn set_env(&mut self, key: &str, value: &str);
+    fn clear_env(&mut self);
+}
+
+impl EnvTarget for StdCommand {
+    fn set_env(&mut self, key: &str, value: &str) {
+        self.env(key, value);
+    }
+    fn clear_env(&mut self) {
+        self.env_clear();
+    }
+}
+
+impl EnvTarget for tokio::process::Command {
+    fn set_env(&mut self, key: &str, value: &str) {
+        self.env(key, value);
+    }
+    fn clear_env(&mut self) {
+        self.env_clear();
+    }
+}
 
 /// 环境注入策略：决定 pi 子进程看到哪些环境变量。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -39,18 +66,21 @@ impl EnvPolicy {
         self
     }
 
-    /// 应用到 `tokio::process::Command`（凭据只往这里走）。
-    pub fn apply(&self, command: &mut Command) {
+    /// 应用到 pi 子进程的命令（凭据只往这里走）。
+    ///
+    /// 泛型在 [`EnvTarget`] 上：`tokio::process::Command`（宿主异步 spawn 用的）
+    /// 与 `std::process::Command` 都能接。
+    pub fn apply(&self, command: &mut impl EnvTarget) {
         match self {
             EnvPolicy::InheritPlus(extra) => {
                 for (key, value) in extra {
-                    command.env(key, value);
+                    command.set_env(key, value);
                 }
             }
             EnvPolicy::Replace(extra) => {
-                command.env_clear();
+                command.clear_env();
                 for (key, value) in extra {
-                    command.env(key, value);
+                    command.set_env(key, value);
                 }
             }
         }
@@ -153,7 +183,7 @@ mod tests {
             EnvPolicy::default().with_extra("FARM_TEST_SECRET", "s3cret");
         let pairs = policy.effective_pairs();
 
-        assert!(pairs.iter().any(|(key, value)| key == "PATH"));
+        assert!(pairs.iter().any(|(key, _)| key == "PATH"));
         assert!(pairs
             .iter()
             .any(|(key, value)| key == "FARM_TEST_SECRET" && value == "s3cret"));
