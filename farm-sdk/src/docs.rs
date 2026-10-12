@@ -374,6 +374,7 @@ fn event_meaning(kind: EventKind) -> &'static str {
         EventKind::HostRestarted => "宿主重启（崩溃恢复）",
         EventKind::ClaimAcquired => "原子 claim 成功",
         EventKind::PluginQuarantined => "插件重试耗尽进入隔离",
+        EventKind::PluginRestarted => "插件崩溃后分级退避重启（进 Kron escalation）",
         EventKind::NotificationSent => "通知通道外发完成",
     }
 }

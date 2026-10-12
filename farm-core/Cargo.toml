@@ -36,3 +36,9 @@ path = "src/bin/fake-nw.rs"
 [[bin]]
 name = "fake-ledger"
 path = "src/bin/fake-ledger.rs"
+
+# fake plugin 测试替身（#19）：进程级 IPC 插件的插件侧替身，场景全经 env 注入
+# （`crash-loop` / `crash-once` / `silent` / `hang` / `normal`）。
+[[bin]]
+name = "fake-plugin"
+path = "src/bin/fake-plugin.rs"

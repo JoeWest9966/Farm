@@ -57,13 +57,15 @@ fn a_dispatch_event_maps_into_the_documented_kron_record_shape() {
 }
 
 #[test]
-fn only_the_five_audit_critical_kinds_reach_the_kron_ledger() {
+fn only_the_six_audit_critical_kinds_reach_the_kron_ledger() {
     let critical = [
         (EventKind::Dispatch, "run_boundary"),
         (EventKind::Merge, "run_boundary"),
         (EventKind::Approval, "approval"),
         (EventKind::StallKill, "escalation"),
         (EventKind::HostRestarted, "escalation"),
+        // #19：插件崩溃后分级退避重启（ADR-0004 决策 4）与宿主重启同路进账。
+        (EventKind::PluginRestarted, "escalation"),
     ];
     for (kind, kron_event) in critical {
         let record = KronRecord::from_event(&envelope(kind, serde_json::json!({})))

@@ -15,6 +15,7 @@ pub mod event_log;
 pub mod events;
 pub mod merge;
 pub mod migrations;
+pub mod plugin;
 pub mod recovery;
 pub mod state;
 pub mod tracker;
@@ -30,6 +31,10 @@ pub use migrations::{Migration, Migrator, MIGRATIONS};
 pub use merge::{
     MergeConfig, MergeError, MergeProposalRecord, MergeReport, MergeService, ProjectionOutcome,
     ProjectionStatus, ProjectionSwitch, RejectionStage,
+};
+pub use plugin::{
+    reconcile_on_startup as reconcile_plugins_on_startup, PluginError, PluginHello, PluginHost,
+    PluginProcess, PluginSpec, PluginState, PluginStatus, PluginStore,
 };
 pub use state::AppState;
 pub use tracker::{Issue, IssueState, TrackerError, TrackerService};

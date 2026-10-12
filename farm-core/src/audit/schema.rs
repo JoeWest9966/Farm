@@ -21,6 +21,7 @@
 //! | `approval` | `approval` | Kron 审批状态机的外部裁决 |
 //! | `stall_kill` | `escalation` | 两口钟判杀 = 异常上报 |
 //! | `host_restarted` | `escalation` | ADR-0004 决策 4：崩溃/重启进 Kron 账（escalation，`actor=farm`） |
+//! | `plugin_restarted` | `escalation` | ADR-0004 决策 4：插件崩溃后分级退避重启（#19），与宿主重启同路 |
 
 use serde::{Deserialize, Serialize};
 
@@ -133,7 +134,9 @@ pub fn kron_event_type(kind: EventKind) -> Option<KronEventType> {
     match kind {
         EventKind::Dispatch | EventKind::Merge => Some(KronEventType::RunBoundary),
         EventKind::Approval => Some(KronEventType::Approval),
-        EventKind::StallKill | EventKind::HostRestarted => Some(KronEventType::Escalation),
+        EventKind::StallKill
+        | EventKind::HostRestarted
+        | EventKind::PluginRestarted => Some(KronEventType::Escalation),
         _ => None,
     }
 }

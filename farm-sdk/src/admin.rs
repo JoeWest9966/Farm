@@ -7,6 +7,9 @@
 use serde::{Deserialize, Serialize};
 
 /// 插件状态（占位闭集；`quarantined` 见 GLOSSARY「隔离」）。
+///
+/// 宿主侧插件监督状态（ticket #19 的 `plugin_state` 表）与宿主管理 API 的投影共用
+/// 同一个闭集，所以它是插件管理面的单一源：`CHECK` 约束由 [`PluginState::ALL`] 生成。
 #[derive(
     Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, schemars::JsonSchema,
 )]
@@ -16,6 +19,30 @@ pub enum PluginState {
     Stopped,
     /// 重试耗尽后被隔离；宿主停止重启、发 `needs_attention`、面板可一键恢复。
     Quarantined,
+}
+
+impl PluginState {
+    /// 闭集的权威清单（`plugin_state` 表 `CHECK` 的单一源）。
+    pub const ALL: [PluginState; 3] = [
+        PluginState::Running,
+        PluginState::Stopped,
+        PluginState::Quarantined,
+    ];
+
+    /// 契约 / 存储里出现的字符串形式。
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            PluginState::Running => "running",
+            PluginState::Stopped => "stopped",
+            PluginState::Quarantined => "quarantined",
+        }
+    }
+}
+
+impl std::fmt::Display for PluginState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 /// 插件摘要。

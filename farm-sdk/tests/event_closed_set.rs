@@ -22,6 +22,7 @@ fn event_kind_closed_set_is_exactly_the_contract_documented_set() {
         "host_restarted",
         "claim_acquired",
         "plugin_quarantined",
+        "plugin_restarted",
         "notification_sent",
     ];
     let actual: Vec<&str> = EventKind::ALL.iter().map(|k| k.as_str()).collect();
@@ -56,7 +57,14 @@ fn audit_critical_events_match_adr_0005_double_write_list() {
         .collect();
     assert_eq!(
         audit,
-        ["dispatch", "stall_kill", "merge", "approval", "host_restarted"]
+        [
+            "dispatch",
+            "stall_kill",
+            "merge",
+            "approval",
+            "host_restarted",
+            "plugin_restarted",
+        ]
     );
 }
 

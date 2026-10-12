@@ -17,6 +17,7 @@ use crate::event_log::EventLog;
 use crate::events::EventBus;
 use crate::merge::MergeService;
 use crate::migrations::{Migrator, MIGRATIONS};
+use crate::plugin::PluginHost;
 use crate::tracker::{NativeAdapter, TrackerService};
 use crate::workflow::WorkflowService;
 use crate::workspace::WorkspaceService;
@@ -56,6 +57,13 @@ pub struct AppState {
     /// 所以 #15/#16 的发布路径行为一字不变。配上之后由 [`AppState::publish`] 顺带双写，
     /// 失败只告警不阻塞（ADR-0005 §3）。
     pub audit: AuditSink,
+    /// 插件监督句柄（#19，加法追加）：进程级 IPC 插件宿主（ADR-0004 决策 4）。
+    ///
+    /// 插件是宿主子进程：宿主持其 stdin（关 stdin = 有序停机），崩溃按 1s/10s/1min
+    /// 分级退避重试（上限 3 次），耗尽 → quarantined + `needs_attention`，恢复经
+    /// [`PluginHost::recover`]。句柄本身只包存储与监督策略，**没有子进程常驻**：
+    /// 没配插件清单的宿主行为一字不变（与 `audit` 默认禁用同理）。
+    pub plugin: PluginHost,
 }
 
 impl AppState {
@@ -96,9 +104,16 @@ impl AppState {
             agent_runner: default_agent_runner(&db),
             merge: MergeService::new(db.clone()),
             audit,
+            plugin: PluginHost::new(&db),
             db,
             events,
         }
+    }
+
+    /// 覆写插件监督句柄（测试注入快退避策略 / 宿主换插件清单）。
+    pub fn with_plugin(mut self, plugin: PluginHost) -> Self {
+        self.plugin = plugin;
+        self
     }
 
     /// 覆写 agent-runner 句柄（测试注入 fake pi 替身 / 生产换 program 与凭据源）。
@@ -190,6 +205,7 @@ impl std::fmt::Debug for AppState {
             .field("db", &self.db)
             .field("event_log", &self.event_log)
             .field("audit_enabled", &self.audit.is_enabled())
+            .field("plugin_store", &self.plugin.store().database().path())
             .finish_non_exhaustive()
     }
 }
