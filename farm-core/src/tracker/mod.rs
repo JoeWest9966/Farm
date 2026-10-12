@@ -44,6 +44,11 @@ pub enum TrackerError {
     #[error("issue {issue_id} is held by {holder}")]
     Conflict { issue_id: String, holder: String },
 
+    /// 票已经 `done`：完成信号（merge commit）不可逆，不能再被 claim 回流
+    /// （code review P2-8；`upsert` / `release` 早已守同一条不变式）。
+    #[error("issue {issue_id} is already done; done is irreversible and cannot be claimed")]
+    AlreadyDone { issue_id: String },
+
     /// 宿主私有存储故障。
     #[error(transparent)]
     Store(#[from] crate::error::CoreError),
@@ -62,6 +67,10 @@ impl TrackerError {
                 "issue {issue_id} is already claimed by {holder}"
             ))
             .with_details(serde_json::json!({ "issue_id": issue_id, "holder": holder })),
+            TrackerError::AlreadyDone { issue_id } => ContractError::conflict(format!(
+                "issue {issue_id} is already done; done is irreversible and cannot be claimed"
+            ))
+            .with_details(serde_json::json!({ "issue_id": issue_id, "state": "done" })),
             TrackerError::Store(source) => source.to_contract_error(),
         }
     }

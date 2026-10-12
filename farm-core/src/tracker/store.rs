@@ -20,6 +20,8 @@ pub enum ClaimOutcome {
     AlreadyHeldByClaimant,
     /// 已被他人持有。
     HeldByOther { holder: String },
+    /// 票已经 `done`：完成信号（merge commit）是不可逆事实，不得被 claim 拉回流内。
+    AlreadyDone,
     /// 票不存在于归一化视图。
     UnknownIssue,
 }
@@ -183,6 +185,11 @@ impl TrackerStore {
             let Some(row) = select_issue_row(conn, issue_id)? else {
                 return Ok(ClaimOutcome::UnknownIssue);
             };
+            // `done` 先于 assignee 判（code review P2-8）：完成信号不可逆，claim 不得把
+            // 一张已关的票推回 `claimed`。放在 assignee 判断之前，原 assignee 也一样拒。
+            if row.state == IssueState::Done {
+                return Ok(ClaimOutcome::AlreadyDone);
+            }
             match row.assignee.as_deref() {
                 // 同一 assignee 重复 claim：幂等（GLOSSARY：claim 是票据状态，不是技术锁）。
                 Some(current) if current == assignee => {

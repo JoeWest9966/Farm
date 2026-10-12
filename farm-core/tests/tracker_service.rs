@@ -443,3 +443,46 @@ fn the_tracker_service_domain_migration_lands_its_own_tables() {
     state.tracker.claim("13", "orchestrator-a").expect("claim");
     assert_eq!(state.tracker.history("13").expect("history").len(), 2);
 }
+
+#[test]
+fn a_done_ticket_cannot_be_claimed_back_into_the_flow() {
+    // code review P2-8：claim 只看 assignee，于是一张 `done` 的票被 claim 后
+    // state 又变回 `claimed`——完成信号（merge commit）被悄悄抹掉。
+    // `done` 不可逆（upsert / release 都守这一点），claim 也必须守。
+    let state = state_with(native(three_tickets()));
+    state.tracker.claim("13", "orchestrator-a").expect("claim");
+    assert!(
+        state.tracker.close("13", "merge-projection").expect("close").is_some(),
+        "关票投影：done"
+    );
+
+    // 别人来抢：拒收，且票不变。
+    let err = state
+        .tracker
+        .claim("13", "orchestrator-b")
+        .expect_err("done 的票不得被 claim");
+    match &err {
+        farm_core::TrackerError::AlreadyDone { issue_id } => assert_eq!(issue_id, "13"),
+        other => panic!("done 的票必须给出 AlreadyDone，收到 {other:?}"),
+    }
+    let contract = err.to_contract_error();
+    assert_eq!(contract.code, farm_sdk::ErrorCode::Conflict);
+    assert_eq!(contract.http_status(), 409);
+
+    // 原 assignee 再来也不行（done 就是终态，不是「还归你」）。
+    assert!(
+        state.tracker.claim("13", "orchestrator-a").is_err(),
+        "done 的票连原 assignee 都不能 reclaim"
+    );
+
+    let view = state.tracker.issues().expect("normalized view");
+    let ticket = view.iter().find(|i| i.issue_id == "13").expect("票 13");
+    assert_eq!(ticket.state, IssueState::Done, "done 不可逆");
+    // 拒收不造假事实：历史最后一条仍是「→ done」，没有新的 claimed 变迁。
+    let history = state.tracker.history("13").expect("history");
+    assert_eq!(
+        history.last().map(|entry| entry.to_state),
+        Some(IssueState::Done),
+        "拒收不得造新历史，也不得把票推回 claimed: {history:?}"
+    );
+}
