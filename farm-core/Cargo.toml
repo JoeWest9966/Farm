@@ -13,7 +13,8 @@ serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 rusqlite.workspace = true
-uuid.workspace = true
+getrandom.workspace = true
+time.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 

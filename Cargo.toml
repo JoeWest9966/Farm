@@ -25,7 +25,8 @@ thiserror = "2"
 # --- farm-core ---
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "net"] }
 rusqlite = { version = "0.37", features = ["bundled"] }
-uuid = { version = "1", features = ["v4"] }
+getrandom = "0.3"
+time = { version = "0.3", features = ["formatting", "std"] }
 tracing = "0.1"
 
 # --- farm-host ---
