@@ -123,7 +123,7 @@ impl AppState {
         Self {
             config: Arc::new(config),
             tracker: default_tracker(&db),
-            workflow: WorkflowService::new(db.clone(), events.clone()),
+            workflow: WorkflowService::new(db.clone()),
             workspace: WorkspaceService::new(db.clone()),
             event_log: EventLog::new(),
             agent_runner: default_agent_runner(&db),

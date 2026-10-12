@@ -88,8 +88,10 @@ pub async fn tracker_claims(
         .map_err(ApiError::from)?;
 
     // 真正抢到才投影：幂等重claim 不是新事实（闭集里的 claim_acquired）。
+    // 走持久化发布路径（code review P2-4）：claim 是一等事实，事件历史 / WS 快照 /
+    // 通知通道都要读得到——只发内存总线的话晚到的订阅者与快照查询都看不到它。
     if outcome == farm_core::tracker::ClaimOutcome::Acquired {
-        state.events.publish(
+        let _ = state.publish(
             NewEvent::new(EventKind::ClaimAcquired, "tracker")
                 .with_ticket(&request.issue_id)
                 .with_payload(serde_json::json!({ "assignee": request.assignee })),

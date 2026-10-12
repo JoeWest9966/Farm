@@ -1,10 +1,18 @@
-//! Workflow 服务句柄：把「读取校验 + LKG 落库 + 事件总线」缝成宿主共享状态。
+//! Workflow 服务句柄：把「读取校验 + LKG 落库 + 告警发布」缝成宿主共享状态。
 //!
 //! 这是 [`crate::AppState`] 的 `workflow` 字段。行为契约（GLOSSARY + ticket #12）：
 //! - 合法配置 → 生效并成为新 LKG（`LoadOutcome::Applied`）；
-//! - 非法配置 + 有 LKG → 生效值回退 LKG，事件总线发 `needs_attention` 告警（`FellBack`）；
+//! - 非法配置 + 有 LKG → 生效值回退 LKG，发 `needs_attention` 告警（`FellBack`）；
 //! - 非法配置 + 无 LKG（首次即非法）→ 拒绝编排，发 `needs_attention`（`Refused`）；
 //! - 非法**绝不** panic；LKG 经重启仍生效（SQLite 持久，重启后从库里引导）。
+//!
+//! ## 告警走持久化发布路径（code review P2-4）
+//! 告警原先只发**内存总线**（`EventBus::publish`）——活着的订阅者收得到，事件日志里
+//! 没有、WS 快照取不到、通知通道的过滤集也看不见它：`needs_attention` 是一等事件
+//! （GLOSSARY），面板「必渲染」，只活在广播里等于面板漏渲染。现在 [`WorkflowService::load_repo`]
+//! 收一个 `&AppState`，告警经 [`crate::AppState::publish`]（先落事件日志再广播）发出。
+//! 句柄因此**不**持有 `AppState`（构造期循环：`AppState` 持有本句柄），与 agent-runner
+//! 的监督任务同一条规矩——发布面作为参数传入。
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -17,7 +25,7 @@ use farm_sdk::workflow::{
 
 use crate::db::Database;
 use crate::error::CoreError;
-use crate::events::EventBus;
+use crate::state::AppState;
 use crate::now_rfc3339;
 
 use super::config::load_from_repo;
@@ -53,15 +61,13 @@ struct Entry {
 #[derive(Clone)]
 pub struct WorkflowService {
     store: LkgStore,
-    events: EventBus,
     effective: Arc<Mutex<HashMap<String, Entry>>>,
 }
 
 impl WorkflowService {
-    pub fn new(db: Database, events: EventBus) -> Self {
+    pub fn new(db: Database) -> Self {
         Self {
             store: LkgStore::new(db),
-            events,
             effective: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -70,7 +76,14 @@ impl WorkflowService {
     ///
     /// 只有宿主私有存储故障才会返回 `Err`（投影为契约 `internal`/`service_unavailable`）；
     /// 配置非法本身**不致错**，而是走 `FellBack` / `Refused` 两条明确路径。
-    pub fn load_repo(&self, repo_id: &str, repo_root: &Path) -> Result<LoadOutcome, CoreError> {
+    ///
+    /// `host` 只用于发告警（[`crate::AppState::publish`] 的持久化路径）；装载本身不依赖它。
+    pub fn load_repo(
+        &self,
+        host: &AppState,
+        repo_id: &str,
+        repo_root: &Path,
+    ) -> Result<LoadOutcome, CoreError> {
         match load_from_repo(repo_root) {
             Ok(config) => {
                 let now = now_rfc3339();
@@ -96,7 +109,7 @@ impl WorkflowService {
                             Some(lkg.updated_at.clone()),
                             Some(reason.clone()),
                         );
-                        self.alert(repo_id, "fallback", &reason);
+                        self.alert(host, repo_id, "fallback", &reason);
                         Ok(LoadOutcome::FellBack {
                             effective: lkg.config,
                             reason,
@@ -105,7 +118,7 @@ impl WorkflowService {
                     None => {
                         // 无 LKG：首次即非法 → 拒绝编排 + needs_attention。
                         self.set_entry(repo_id, None, None, None, Some(reason.clone()));
-                        self.alert(repo_id, "refused", &reason);
+                        self.alert(host, repo_id, "refused", &reason);
                         Ok(LoadOutcome::Refused { reason })
                     }
                 }
@@ -176,17 +189,23 @@ impl WorkflowService {
         }
     }
 
-    /// 在事件总线上发一条 `needs_attention` 告警（GLOSSARY：一等事件，面板必渲染）。
+    /// 发一条 `needs_attention` 告警（GLOSSARY：一等事件，面板必渲染）。
     /// payload 标出 `config_state`（fallback / refused）、`repo_id` 与 `reason`。
-    fn alert(&self, repo_id: &str, config_state: &str, reason: &str) {
+    ///
+    /// 走 [`crate::AppState::publish`]（先落事件日志再广播，code review P2-4）：
+    /// 只发内存总线的话，事件历史/WS 快照/通知通道都看不见这条告警。
+    fn alert(&self, host: &AppState, repo_id: &str, config_state: &str, reason: &str) {
         let payload = serde_json::json!({
             "kind": "workflow_config",
             "repo_id": repo_id,
             "config_state": config_state,
             "reason": reason,
         });
-        self.events.publish(
+        if let Err(e) = host.publish(
             NewEvent::new(EventKind::NeedsAttention, "workflow").with_payload(payload),
-        );
+        ) {
+            // 告警发不出去不该让装载失败（LKG 已生效）；只留痕。
+            tracing::warn!(repo = %repo_id, error = %e, "workflow config alert could not be published");
+        }
     }
 }

@@ -77,8 +77,10 @@ pub async fn establish_worktree(
     // workflow 就保持「无生效配置」（投影全关的安全默认），不滥发 needs_attention。
     let repo_root = std::path::Path::new(&repo_path_str);
     if repo_root.join(".farm/workflow.json").exists() {
-        let _ = state.workflow.load_repo(&repo_path_str, repo_root);
-        let _ = state.workflow.load_repo(&spec_id_str, repo_root);
+        // 告警经持久化发布路径（code review P2-4）：事件历史 / WS 快照 / 通知通道
+        // 都看得见，不只活着的总线订阅者。
+        let _ = state.workflow.load_repo(&state, &repo_path_str, repo_root);
+        let _ = state.workflow.load_repo(&state, &spec_id_str, repo_root);
     }
 
     Ok(Json(WorktreeRef {
