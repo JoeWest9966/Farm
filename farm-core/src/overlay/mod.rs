@@ -17,7 +17,9 @@
 //! 覆盖层是宿主自身的配置面（ADR-0002 §1 边界分明）。
 
 pub mod migrations;
+pub mod service;
 pub mod store;
 
 pub use migrations::{v9_workflow_overlay, OVERLAY_TABLE};
+pub use service::{OverlayError, OverlayService};
 pub use store::{OverlayStore, StoredOverlay};

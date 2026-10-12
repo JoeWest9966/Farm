@@ -169,19 +169,21 @@ impl OverlayValueKind {
 ///
 /// 返回 `Err` 时带人读原因（进闭集 `invalid_request` 的消息）。**不静默强转**：
 /// 把 `"2"` 塞进计数键是拒绝，不是当成 2——覆盖层是显式操作，猜口径比报错更糟。
+///
+/// 逐键判据（与 [`crate::workflow`] 的语义校验同源，见 `farm-core` 的
+/// `workflow::config::validate`）：并发/stall/退避倍率至少 1；重试次数与基础延迟
+/// 可以是 0（0 = 不重试，`RetryBackoff::default()` 就是这样）；跨字段约束
+/// （启用重试时基础延迟必须 >= 1）由宿主在**合并后**校验生效配置时把门。
 pub fn validate_value(key: OverlayKey, value: &Value) -> Result<(), String> {
-    match key.value_kind() {
-        OverlayValueKind::Count => match value.as_u64() {
-            Some(n) if n >= 1 => Ok(()),
-            Some(_) => Err(format!("{key} 至少为 1")),
-            None => Err(format!("{key} 需要一个整数，收到 {value}")),
-        },
-        OverlayValueKind::Seconds => match value.as_u64() {
-            Some(n) if n >= 1 => Ok(()),
-            Some(_) => Err(format!("{key} 至少为 1")),
-            None => Err(format!("{key} 需要一个整数，收到 {value}")),
-        },
-        OverlayValueKind::Labels => match value.as_array() {
+    match key {
+        OverlayKey::MaxConcurrency | OverlayKey::StallThresholdSecs => {
+            integer_at_least(key, value, 1)
+        }
+        OverlayKey::RetryBackoffMultiplier => integer_at_least(key, value, 1),
+        OverlayKey::RetryMaxRetries | OverlayKey::RetryBaseDelayMs => {
+            integer_at_least(key, value, 0)
+        }
+        OverlayKey::DispatchLabels => match value.as_array() {
             Some(labels) if !labels.is_empty() => {
                 let all_text = labels
                     .iter()
@@ -194,14 +196,26 @@ pub fn validate_value(key: OverlayKey, value: &Value) -> Result<(), String> {
             }
             _ => Err(format!("{key} 需要至少一个标签，收到 {value}")),
         },
-        OverlayValueKind::Text => match value.as_str() {
+        OverlayKey::PromptTemplate => match value.as_str() {
             Some(text) if !text.trim().is_empty() => Ok(()),
             _ => Err(format!("{key} 需要非空白文本，收到 {value}")),
         },
-        OverlayValueKind::Flag => match value.as_bool() {
+        OverlayKey::ProjectionCloseIssue
+        | OverlayKey::ProjectionOpenPr
+        | OverlayKey::ProjectionCommentMergeCommit
+        | OverlayKey::ProjectionAddLabel => match value.as_bool() {
             Some(_) => Ok(()),
             None => Err(format!("{key} 需要布尔值，收到 {value}")),
         },
+    }
+}
+
+/// 整数下界校验（计数/秒数共用）。
+fn integer_at_least(key: OverlayKey, value: &Value, min: u64) -> Result<(), String> {
+    match value.as_u64() {
+        Some(n) if n >= min => Ok(()),
+        Some(_) => Err(format!("{key} 至少为 {min}")),
+        None => Err(format!("{key} 需要一个整数，收到 {value}")),
     }
 }
 

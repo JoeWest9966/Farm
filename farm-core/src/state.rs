@@ -17,6 +17,7 @@ use crate::event_log::EventLog;
 use crate::events::EventBus;
 use crate::merge::MergeService;
 use crate::migrations::{Migrator, MIGRATIONS};
+use crate::overlay::OverlayService;
 use crate::tracker::{NativeAdapter, TrackerService};
 use crate::workflow::WorkflowService;
 use crate::workspace::WorkspaceService;
@@ -50,6 +51,10 @@ pub struct AppState {
     /// 完成信号 = 集成分支上该票的 merge commit。测试经 [`AppState::with_merge`]
     /// 换成快的测试闸门（生产默认 `cargo test`）。
     pub merge: MergeService,
+    /// 覆盖层句柄（#24，加法追加）：对 workflow 配置基线的**临时运行时覆盖**
+    /// （GLOSSARY「覆盖层」/ ADR-0002 §2 配置双层 / ADR-0005 §6 per-仓库 keyed，
+    /// 落宿主私有 SQLite，不落被编排仓库）。
+    pub overlay: OverlayService,
     /// 审计双写旁路（#20，加法追加）：关键事件经 `ledger record` 子进程进 Kron 账本。
     ///
     /// **默认禁用**（`AuditSink::disabled()`）：宿主没配上 `ledger` 之前一个子进程都不起，
@@ -95,6 +100,7 @@ impl AppState {
             event_log: EventLog::new(),
             agent_runner: default_agent_runner(&db),
             merge: MergeService::new(db.clone()),
+            overlay: OverlayService::new(db.clone()),
             audit,
             db,
             events,

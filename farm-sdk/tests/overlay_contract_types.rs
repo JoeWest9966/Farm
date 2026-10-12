@@ -70,6 +70,12 @@ fn a_value_is_validated_against_the_kind_its_key_declares() {
         "并发配额至少 1（否则没有票可派发）");
     assert!(validate_value(OverlayKey::StallThresholdSecs, &serde_json::json!(300)).is_ok());
     assert!(validate_value(OverlayKey::StallThresholdSecs, &serde_json::json!(0)).is_err());
+    // 重试次数与基础延迟可以是 0（0 = 不重试，RetryBackoff::default() 即此形状）。
+    assert!(validate_value(OverlayKey::RetryMaxRetries, &serde_json::json!(0)).is_ok());
+    assert!(validate_value(OverlayKey::RetryBaseDelayMs, &serde_json::json!(0)).is_ok());
+    // 退避倍率至少 1（0 倍永不退避，配置校验同判据）。
+    assert!(validate_value(OverlayKey::RetryBackoffMultiplier, &serde_json::json!(1)).is_ok());
+    assert!(validate_value(OverlayKey::RetryBackoffMultiplier, &serde_json::json!(0)).is_err());
     assert!(validate_value(
         OverlayKey::DispatchLabels,
         &serde_json::json!(["agent-ready", "panel"])
