@@ -14,14 +14,14 @@
 
 use std::sync::LazyLock;
 
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::extract::Request;
 use axum::http::{HeaderMap, HeaderName};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use farm_core::AppState;
-use farm_sdk::admin::{AdminPluginListResponse, AdminStatusResponse};
+use farm_sdk::admin::{AdminPluginListResponse, AdminStatusResponse, PluginSummary};
 use farm_sdk::{AuthScheme, ContractError, ServiceName, CONTRACT_VERSION, HOST_VERSION};
 
 use crate::error::ApiError;
@@ -102,6 +102,60 @@ pub async fn status(State(state): State<AppState>) -> Json<AdminStatusResponse> 
         contract_version: CONTRACT_VERSION.to_string(),
         bind_addr: state.config.bind.to_string(),
         services: ServiceName::ALL.to_vec(),
+    })
+}
+
+/// `POST /admin/plugins/{id}/recover`：恢复隔离/停机的插件（GLOSSARY「隔离」一键恢复，#19 recover）。
+///
+/// 经 [`farm_core::AppState::plugin`] 的 `PluginHost::recover` 重置重试预算并重启；重启后插件
+/// 自己从契约 API 读状态自愈（不另开私有后门）。返回恢复后的 [`PluginSummary`]。
+pub async fn recover(
+    State(state): State<AppState>,
+    Path(plugin_id): Path<String>,
+) -> Result<Json<PluginSummary>, ApiError> {
+    state
+        .plugin
+        .recover(&state, &plugin_id)
+        .await
+        .map_err(plugin_error)?;
+    let status = state
+        .plugin
+        .status(&plugin_id)
+        .map_err(ApiError::from)?
+        .ok_or_else(|| {
+            ApiError(ContractError::not_found(format!(
+                "plugin {plugin_id} vanished right after recovery"
+            )))
+        })?;
+    Ok(Json(status.to_summary()))
+}
+
+/// 插件宿主错误 → 契约闭集错误的投影。
+///
+/// 映射放在管理面自己的文件里（而非给 #19 的 `plugin/mod.rs` 加 `From` impl）：
+/// [`farm_core::plugin::PluginError`] 是公开类型，管理面消费它时做闭集投影，边界仍清晰。
+fn plugin_error(error: farm_core::plugin::PluginError) -> ApiError {
+    use farm_core::plugin::PluginError;
+    ApiError(match error {
+        PluginError::Unknown { plugin_id } => {
+            ContractError::not_found(format!("plugin {plugin_id} is not registered"))
+        }
+        PluginError::AlreadyRunning { plugin_id } => ContractError::conflict(format!(
+            "plugin {plugin_id} is already supervised; recovery is for stopped/quarantined plugins"
+        )),
+        PluginError::NotRunning { plugin_id, state } => {
+            ContractError::conflict(format!("plugin {plugin_id} is {state}, not recoverable"))
+        }
+        PluginError::Spawn { plugin_id, .. }
+        | PluginError::Handshake { plugin_id, .. }
+        | PluginError::HandshakeRejected { plugin_id, .. }
+        | PluginError::ExitedBeforeHandshake { plugin_id, .. } => {
+            ContractError::service_unavailable(format!("plugin {plugin_id} could not be relaunched"))
+        }
+        PluginError::InvalidSpec(message) => {
+            ContractError::invalid_request(format!("invalid plugin spec: {message}"))
+        }
+        PluginError::Store(source) => source.to_contract_error(),
     })
 }
 

@@ -115,7 +115,12 @@ pub const ADMIN_ROUTES: &[AdminRouteSpec] = &[
     AdminRouteSpec {
         method: "GET",
         path: "/admin/plugins",
-        summary: "插件清单与状态（装卸能力占位）",
+        summary: "插件清单与状态（#19 监督状态 → PluginSummary）",
+    },
+    AdminRouteSpec {
+        method: "POST",
+        path: "/admin/plugins/{id}/recover",
+        summary: "恢复隔离/停机的插件（GLOSSARY「隔离」一键恢复，#19 recover）",
     },
     AdminRouteSpec {
         method: "GET",

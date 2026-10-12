@@ -5,11 +5,14 @@
 //! 独立 `/admin` 前缀 + 独立管理 token（`X-Farm-Admin-Token`），与操作 token 不是同一个凭据，
 //! **交叉访问被拒**；契约 API 无法触达管理面操作（负向）。
 
+use std::path::PathBuf;
+use std::time::Duration;
+
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode};
-use farm_core::plugin::{PluginState, PluginStatus};
+use farm_core::plugin::{PluginHost, PluginSpec, PluginState, PluginStatus, RetryPolicy};
 use farm_host::build_router;
-use farm_sdk::admin::AdminPluginListResponse;
+use farm_sdk::admin::{AdminPluginListResponse, PluginSummary};
 use farm_sdk::{ContractError, ErrorCode};
 use tower::ServiceExt;
 
@@ -198,4 +201,108 @@ async fn the_admin_plugin_list_also_requires_the_admin_token() {
         .await
         .expect("oneshot");
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+// ---------------------------------------------------------------------------
+// 插件恢复：POST /admin/plugins/{id}/recover（GLOSSARY「隔离」一键恢复，#19 recover）
+// ---------------------------------------------------------------------------
+
+/// 带管理 token 的 POST（恢复路由；空体，无 body 抽取，故不需要 content-type）。
+fn admin_post(uri: &str, token: &str) -> Request<Body> {
+    Request::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("x-farm-admin-token", token)
+        .body(Body::empty())
+        .expect("request")
+}
+
+/// fake-plugin 替身路径：cargo 把 bins 与测试二进制放进同一个 `<target>/<profile>/`
+/// （测试二进制在 `deps/` 子目录，bins 在上一级），故从 `current_exe` 上跳两层。
+fn fake_plugin_path() -> PathBuf {
+    let mut path = std::env::current_exe().expect("test binary path");
+    path.pop(); // <profile>/deps
+    path.pop(); // <profile>
+    path.join("fake-plugin")
+}
+
+#[tokio::test]
+async fn the_recover_route_is_guarded_by_the_admin_token() {
+    // 证明恢复路由已挂载且盖着管理面中间件：op token 递上来 → forbidden（403），
+    // 而非「路由不存在」的 404。
+    let app = admin_app();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/admin/plugins/fake-plugin/recover")
+                .header("x-farm-token", OP_TOKEN)
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("oneshot");
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn recovering_an_unknown_plugin_is_not_found() {
+    let app = admin_app();
+    let response = app
+        .oneshot(admin_post("/admin/plugins/ghost/recover", ADMIN_TOKEN))
+        .await
+        .expect("oneshot");
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert_eq!(closed_set_error(response).await.code, ErrorCode::NotFound);
+}
+
+#[tokio::test]
+async fn recover_relaunches_a_quarantined_plugin_through_the_admin_api() {
+    // 端到端：经管理 API 恢复一个真被子进程崩溃耗尽而隔离的插件 → 重启并自愈（running）。
+    let fake_plugin = fake_plugin_path();
+    if !fake_plugin.exists() {
+        eprintln!(
+            "SKIP recover happy-path: fake-plugin not built at {}（跑 cargo test --workspace 即构建）",
+            fake_plugin.display()
+        );
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir").keep();
+    let counter = dir.join("crash-once.counter");
+    std::fs::write(&counter, "0").expect("counter starts at zero");
+    let log = dir.join("fake-plugin.log");
+    std::fs::write(&log, "").expect("empty log");
+
+    let mut state = admin_state();
+    // max_restarts=0：crash-once 第一次崩即越界 → 立刻隔离（不必真睡退避）。
+    let host = PluginHost::with_policy(&state.db, RetryPolicy::with_schedule(vec![10], 0));
+    state = state.with_plugin(host);
+    let spec = PluginSpec::new("fake-plugin", "fake plugin", fake_plugin.display().to_string())
+        .with_env("FAKE_PLUGIN_SCENARIO", "crash-once")
+        .with_env("FAKE_PLUGIN_LOG", log.display().to_string())
+        .with_env("FAKE_PLUGIN_COUNTER", counter.display().to_string())
+        .with_handshake_timeout(Duration::from_millis(400))
+        .with_shutdown_grace(Duration::from_millis(500));
+
+    let _ = state.plugin.launch(&state, &spec).await; // 崩一次 → 越界 → 隔离
+    state
+        .plugin
+        .wait_for_state("fake-plugin", PluginState::Quarantined, Duration::from_secs(10))
+        .await
+        .expect("crash-once must quarantine under max_restarts=0");
+
+    // 经管理 API 恢复（clone 一份给 router，原句柄留着收尾）。
+    let app = build_router(state.clone());
+    let response = app
+        .oneshot(admin_post("/admin/plugins/fake-plugin/recover", ADMIN_TOKEN))
+        .await
+        .expect("oneshot");
+    assert_eq!(response.status(), StatusCode::OK, "恢复路由必须放行并重启插件");
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.expect("body");
+    let summary: PluginSummary = serde_json::from_slice(&bytes).expect("summary json");
+    assert_eq!(summary.plugin_id, "fake-plugin");
+    assert_eq!(summary.state, PluginState::Running, "恢复后回到 running（自愈）");
+    assert_eq!(summary.restarts, 0, "恢复重置重试预算");
+
+    state.plugin.shutdown_all().await;
 }

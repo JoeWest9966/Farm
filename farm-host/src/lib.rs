@@ -107,6 +107,7 @@ pub fn build_router(state: AppState) -> Router {
     for route in ADMIN_ROUTES {
         let endpoint = match (route.method, route.path) {
             ("GET", "/admin/plugins") => get(admin::plugins),
+            ("POST", "/admin/plugins/{id}/recover") => post(admin::recover),
             ("GET", "/admin/status") => get(admin::status),
             ("GET", "/admin/workflow/config/{repo_id}") => get(workflow::config_status),
             _ => panic!(
