@@ -6,12 +6,14 @@
 //!    `GET /v1/events/stream` 是 WS、`GET /v1/events/history` 是事件快照（#15 投影面），
 //!    `GET /v1/workspace/mappings`（#14 映射视图）、tracker 的 `GET /v1/tracker/issues` 与
 //!    `POST /v1/tracker/claims`（#13）也已真正打通；其余返回闭集 `not_implemented`——归 #16–#18。
-//! 2. **宿主管理 API**：`ADMIN_ROUTES` 两条，独立前缀 `/admin`；管理 token
-//!    校验机制是接口位，归 #23。
+//! 2. **宿主管理 API**：`ADMIN_ROUTES` 若干，独立前缀 `/admin` + **独立管理 token**
+//!    （`X-Farm-Admin-Token`，#23）：插件装卸/恢复、tracker provider 配置、服务启停。
+//!    管理 token ≠ 操作 token（spec 新裁决）——`admin::require_admin_token` 校验，交叉访问被拒。
 //! 3. **面板伺服**：`build.rs` 把 `farm-panel` 编成 wasm 并嵌入，`/` 伺服。
 //!
-//! 鉴权（ticket #11）：契约面（含 `/handshake` 与 WS upgrade）单 token 静态鉴权，
-//! 缺 token 与错 token 同码同消息（`unauthorized` / 401），避免预言机。
+//! 鉴权：契约面（ticket #11）单 op token 静态鉴权，缺 token 与错 token 同码同消息
+//! （`unauthorized` / 401）；管理面（ticket #23）独立管理 token，op token 递到管理面 →
+//! `forbidden`（越面），缺/错管理 token → `unauthorized`。两面凭据不同、边界分明（ADR-0002 §1）。
 //!
 //! [`build_router`] 是宿主路由的唯一装配点：`main` 与测试用它拿到**同一个**
 //! axum `Router`，所以测试在真实接缝上断言，不另造一个 app。
