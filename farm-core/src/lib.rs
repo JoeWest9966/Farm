@@ -14,6 +14,7 @@ pub mod error;
 pub mod event_log;
 pub mod events;
 pub mod migrations;
+pub mod recovery;
 pub mod state;
 pub mod tracker;
 pub mod workspace;

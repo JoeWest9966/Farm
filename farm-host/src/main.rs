@@ -33,6 +33,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Err(e) => tracing::warn!(error = %e, "workspace startup reconcile failed (non-fatal)"),
     }
+    // 崩溃恢复（ADR-0005 §4，ticket #20）：running attempt → interrupted（保留现场）+
+    // host_restarted 事件入账 + 审计旁路批量补账（幂等）。重派与否留给编排器。
+    match farm_core::recovery::recover_on_startup(&state) {
+        Ok(report) => {
+            if !report.interrupted.is_empty() || report.backfilled > 0 {
+                tracing::info!(
+                    interrupted = report.interrupted.len(),
+                    backfilled = report.backfilled,
+                    "host crash recovery"
+                );
+            }
+        }
+        Err(e) => tracing::warn!(error = %e, "host crash recovery failed (non-fatal)"),
+    }
     let router = build_router(state);
 
     let listener = tokio::net::TcpListener::bind(bind).await?;

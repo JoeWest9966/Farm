@@ -190,6 +190,26 @@ impl EventLog {
         let truncated = matched > events.len() as i64 || pruned;
         Ok(EventHistoryResponse { events, truncated })
     }
+
+    /// 未入账事件（`audited=0`），按 `seq` 升序，最多 `limit` 条（ticket #20 对账补账用）。
+    pub fn unposted(&self, db: &Database, limit: usize) -> Result<Vec<EventEnvelope>, CoreError> {
+        db.with_conn_core(|conn| self.unposted_conn(conn, limit))
+    }
+
+    /// 裸连接形态（同一把锁内读）。
+    pub fn unposted_conn(
+        &self,
+        conn: &Connection,
+        limit: usize,
+    ) -> Result<Vec<EventEnvelope>, CoreError> {
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {COLUMNS} FROM {EVENTS_TABLE} WHERE audited = 0 ORDER BY seq ASC LIMIT ?"
+        ))?;
+        let rows = stmt
+            .query_map([limit as i64], stored_event)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows.into_iter().map(|r| r.into_envelope()).collect()
+    }
 }
 
 impl Default for EventLog {

@@ -220,6 +220,57 @@ impl AuditSink {
             .collect();
         self.writer.record(&records)
     }
+
+    /// 启动对账（ADR-0005 §8）：扫未入账（`audited=0`）的审计关键事件，批量补进 Kron
+    /// （ledger 幂等），成功则置 `audited=1`。返回补账笔数。旁路未就绪 → 0，绝不当异常
+    /// 炸主流程；补账失败也只告警，留待下次启动再补（ledger 幂等）。
+    pub fn reconcile(&self, state: &AppState) -> Result<usize, CoreError> {
+        if !self.is_enabled() || !self.actor_farm_accepted {
+            return Ok(0);
+        }
+        let envelopes = state.event_log.unposted(&state.db, self.batch_size())?;
+        let critical: Vec<_> = envelopes
+            .into_iter()
+            .filter(|e| e.kind.is_audit_critical())
+            .collect();
+        if critical.is_empty() {
+            clear_unposted_marker(&state.db);
+            return Ok(0);
+        }
+        let result = self.post_batch(&critical)?;
+        if !result.ok {
+            tracing::warn!(
+                exit = result.exit_code,
+                "audit reconcile backfill failed; retries next start (ledger is idempotent)"
+            );
+            return Ok(0);
+        }
+        let mut backfilled = 0usize;
+        for envelope in &critical {
+            mark_audited(&state.db, &envelope.id)?;
+            backfilled += 1;
+        }
+        clear_unposted_marker(&state.db);
+        Ok(backfilled)
+    }
+
+    /// 面板读账侧车（低频，ADR-0002/0004：Kron 深度审计不进面板，只走 `--agg` 聚合）：
+    /// 跑 `<ledger> read --agg`，回 stdout 原文（聚合由账本侧算，面板不重演）。
+    pub fn read_aggregate(&self) -> Result<String, CoreError> {
+        if !self.is_enabled() {
+            return Err(CoreError::Config(
+                "audit sidecar disabled; cannot read the ledger".into(),
+            ));
+        }
+        let output = std::process::Command::new(self.program())
+            .args(["read", "--agg"])
+            .stderr(std::process::Stdio::null())
+            .output()
+            .map_err(|e| {
+                CoreError::Config(format!("cannot spawn `{} read --agg`: {e}", self.program()))
+            })?;
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    }
 }
 
 impl Default for AuditSink {

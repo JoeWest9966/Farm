@@ -26,3 +26,8 @@ tempfile.workspace = true
 [[bin]]
 name = "fake-pi"
 path = "src/bin/fake-pi.rs"
+
+# fake ledger 测试替身（ticket #20）：顶替 Kron `ledger record` 子进程，记 NDJSON 进日志。
+[[bin]]
+name = "fake-ledger"
+path = "src/bin/fake-ledger.rs"
