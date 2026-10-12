@@ -157,6 +157,16 @@ pub const ADMIN_ROUTES: &[AdminRouteSpec] = &[
         path: "/admin/workflow/config/{repo_id}",
         summary: "查询某被编排仓库当前生效的 workflow 配置与 LKG 状态（ticket #12）",
     },
+    AdminRouteSpec {
+        method: "GET",
+        path: "/admin/notifier/channel/{repo_id}",
+        summary: "查询某被编排仓库的通知通道配置：enabled + 过滤集（GLOSSARY「通知通道」，ticket #21）",
+    },
+    AdminRouteSpec {
+        method: "POST",
+        path: "/admin/notifier/channel/{repo_id}",
+        summary: "设置某被编排仓库的通知通道配置：enabled + 过滤集（重启后生效，ticket #21）",
+    },
 ];
 
 /// 拼接某服务在契约前缀下的路径。

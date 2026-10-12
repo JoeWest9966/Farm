@@ -64,6 +64,8 @@
 | POST | `/admin/services/{name}/stop` | 停机一个服务（服务启停，#23；宿主持有开关，发 needs_attention） | 已通：停机一个服务（#23） |
 | POST | `/admin/services/{name}/start` | 启动一个服务（服务启停，#23） | 已通：启动一个服务（#23） |
 | GET | `/admin/workflow/config/{repo_id}` | 查询某被编排仓库当前生效的 workflow 配置与 LKG 状态（ticket #12） | 已通：workflow 配置 + LKG 查询（#12） |
+| GET | `/admin/notifier/channel/{repo_id}` | 查询某被编排仓库的通知通道配置：enabled + 过滤集（GLOSSARY「通知通道」，ticket #21） | 已通：通知通道配置 view/set（#21，宿主零推送域知识） |
+| POST | `/admin/notifier/channel/{repo_id}` | 设置某被编排仓库的通知通道配置：enabled + 过滤集（重启后生效，ticket #21） | 已通：通知通道配置 view/set（#21，宿主零推送域知识） |
 
 ## 闭集错误码（closed-set error codes）
 
