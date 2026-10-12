@@ -219,7 +219,7 @@ impl PluginHost {
     /// 有序停机一个插件：关 stdin → 宽限等待 → 强杀（[`process::PluginProcess::shutdown`]）。
     pub async fn shutdown(&self, plugin_id: &str) -> Result<(), PluginError> {
         let live = { self.inner.live.lock().await.remove(plugin_id) };
-        let Some(live) = live else {
+        let Some(mut live) = live else {
             return Err(PluginError::Unknown {
                 plugin_id: plugin_id.to_string(),
             });
@@ -231,7 +231,26 @@ impl PluginHost {
             .await
             .map(|spec| spec.shutdown_grace)
             .unwrap_or(DEFAULT_SHUTDOWN_GRACE);
-        let _ = tokio::time::timeout(grace + SHUTDOWN_JOIN_SLACK, live.task).await;
+        match tokio::time::timeout(grace + SHUTDOWN_JOIN_SLACK, &mut live.task).await {
+            Ok(joined) => {
+                if let Err(e) = joined {
+                    tracing::warn!(plugin = %plugin_id, error = %e, "plugin supervision task panicked");
+                }
+            }
+            Err(_elapsed) => {
+                // 超时 = 监督循环没在宽限内收尾。**必须 abort，不能 detach**：detach 的
+                // 任务会继续跑完它的退避睡眠，然后在没人知道的情况下重启插件——那个进程
+                // 不在 `live` 表里，`shutdown_all` / `Drop` 都 reap 不到它（孤儿）。
+                // abort 丢掉任务的 future，其中的 `PluginProcess` 随之 drop，
+                // `kill_on_drop` 保证子进程陪葬（ADR-0004 决策 4「父死子陪葬」）。
+                live.task.abort();
+                tracing::warn!(
+                    plugin = %plugin_id,
+                    grace_ms = grace.as_millis(),
+                    "plugin supervision did not finish within the shutdown window; the task was aborted"
+                );
+            }
+        }
         Ok(())
     }
 
@@ -397,7 +416,7 @@ async fn supervise(
                     if let Some(tx) = first_handshake.take() {
                         let _ = tx.send(Err(e));
                     }
-                    if !on_crash(&inner, &host, &spec, &reason).await {
+                    if !on_crash(&inner, &host, &spec, &reason, &mut stop).await {
                         break;
                     }
                     continue;
@@ -438,7 +457,7 @@ async fn supervise(
                             None => "exited without a status".to_string(),
                         };
                         drop(child);
-                        if !on_crash(&inner, &host, &spec, &reason).await {
+                        if !on_crash(&inner, &host, &spec, &reason, &mut stop).await {
                             break;
                         }
                     }
@@ -452,7 +471,7 @@ async fn supervise(
                 }
                 child.kill().await;
                 drop(child);
-                if !on_crash(&inner, &host, &spec, &reason).await {
+                if !on_crash(&inner, &host, &spec, &reason, &mut stop).await {
                     break;
                 }
             }
@@ -494,7 +513,16 @@ fn on_voluntary_exit(inner: &PluginHostInner, spec: &PluginSpec, status: &std::p
     /// ADR-0004 决策 4：分级指数退避 1s/10s/1min，上限 3 次；耗尽 → quarantined
     /// （停止重启 + `needs_attention` + 面板一键恢复）。崩溃/重启同时进 Kron 账
     /// （escalation，`actor=farm`）——经 #20 的审计双写路径，未入账只标记不阻塞。
-async fn on_crash(inner: &PluginHostInner, host: &AppState, spec: &PluginSpec, reason: &str) -> bool {
+    ///
+    /// `stop` 是宿主的停机信号（oneshot 接收端）：退避睡眠与它 `select!`，停机先行即
+    /// 返回 `false`（不再重启），监督循环因此退出（code review P1-2）。
+async fn on_crash(
+    inner: &PluginHostInner,
+    host: &AppState,
+    spec: &PluginSpec,
+    reason: &str,
+    stop: &mut oneshot::Receiver<()>,
+) -> bool {
     let at = now_rfc3339();
     let restarts = match inner.store.note_crash(&spec.plugin_id, reason, &at) {
             Ok(restarts) => restarts,
@@ -549,8 +577,26 @@ async fn on_crash(inner: &PluginHostInner, host: &AppState, spec: &PluginSpec, r
             backoff_ms = wait.as_millis(),
             "plugin crashed; restarting after the tiered backoff"
         );
-        tokio::time::sleep(wait).await;
-        true
+        // 退避睡眠**必须**可被停机信号打断（code review P1-2）：否则 `shutdown` 在
+        // 10s/60s 档上等满宽限后只能 detach 监督任务，任务睡醒照样重启插件——那个
+        // 进程不在 `live` 表里，宿主收尾（`shutdown_all` / `Drop`）reap 不到它，
+        // 成为孤儿（破 ADR-0004 决策 4「父死子陪葬」与 #19「宿主收尾后无孤儿插件进程」）。
+        tokio::select! {
+            _ = tokio::time::sleep(wait) => true,
+            _ = &mut *stop => {
+                // 停机先行：账面落 stopped（不留「running + 有待定重启」的假象），不再重启。
+                let at = now_rfc3339();
+                let _ = inner.store.set_state(&spec.plugin_id, PluginState::Stopped, &at);
+                let _ = inner.store.set_next_restart(&spec.plugin_id, None, &at);
+                let _ = inner.store.set_pid(&spec.plugin_id, None, &at);
+                tracing::info!(
+                    plugin = %spec.plugin_id,
+                    backoff_ms = wait.as_millis(),
+                    "plugin shutdown arrived during the backoff window; the restart is cancelled"
+                );
+                false
+            }
+        }
 }
 
 /// 有序停机：关 stdin → 宽限 → 强杀，然后落 `stopped`。

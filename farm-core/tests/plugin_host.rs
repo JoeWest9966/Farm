@@ -429,3 +429,104 @@ async fn a_quarantined_plugin_self_heals_through_the_recovery_interface() {
     assert_eq!(status.state, PluginState::Running, "恢复后回到 running");
     assert_eq!(status.restarts, 0, "恢复重置重试预算");
 }
+
+// ---------------------------------------------------------------------------
+// code review P1-2：退避窗口内请求停机 → 不重启、不留孤儿
+// ---------------------------------------------------------------------------
+
+/// 慢档退避（3s）：保证 `shutdown` 落在**退避睡眠中间**（规范档 1s/10s/1min 的
+/// 第三档之前那一档的等比例缩小；机制不变，只是测试不必真睡 10s）。
+fn slow_backoff_policy() -> RetryPolicy {
+    RetryPolicy::with_schedule(vec![3_000], 3)
+}
+
+/// 等插件进入「崩过一次、正在退避窗口里睡」这个中间态。
+async fn wait_in_backoff(state: &AppState, plugin_id: &str) -> PluginStatus {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let status = status_of(state, plugin_id);
+        if status.restarts >= 1 && status.next_restart_at.is_some() {
+            return status;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "插件从未进入退避窗口: {status:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+#[tokio::test]
+async fn shutting_down_during_the_backoff_window_leaves_no_orphan_and_no_respawn() {
+    let dir = tempfile::tempdir().expect("tempdir").keep();
+    let log = dir.join("fake-plugin.log");
+    std::fs::write(&log, "").expect("empty log");
+
+    let mut state = AppState::new_in_memory(HostConfig {
+        bind: "127.0.0.1:3793".parse().expect("valid bind"),
+        op_token: "plugin-test-token".into(),
+        admin_token: None,
+        db_path: dir.join("farm.db"),
+    })
+    .expect("in-memory state");
+    let host = PluginHost::with_policy(&state.db, slow_backoff_policy());
+    state = state.with_plugin(host);
+
+    // crash-loop：每次都在握手前崩 → 监督循环进退避，窗口内**没有**子进程。
+    let result = state.plugin.launch(&state, &spec("crash-loop", &log)).await;
+    assert!(result.is_err(), "crash-loop 起不来，launch 报握手失败");
+    let backing_off = wait_in_backoff(&state, "fake-plugin").await;
+    assert_eq!(backing_off.state, PluginState::Running, "退避窗口内仍是 running");
+
+    let spawns_before_stop = count(&log, "start");
+    let pids_before_stop = log_events(&log)
+        .into_iter()
+        .filter_map(|event| {
+            event
+                .get("pid")
+                .and_then(|pid| pid.as_u64())
+                .map(|pid| pid as u32)
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        !pids_before_stop.is_empty(),
+        "退避窗口前至少拉起过一次（日志里有 pid）: {:?}",
+        log_events(&log)
+    );
+
+    // 在退避睡眠中间请求停机。
+    let started = tokio::time::Instant::now();
+    state
+        .plugin
+        .shutdown("fake-plugin")
+        .await
+        .expect("shutdown must report, not hang");
+    let elapsed = started.elapsed();
+
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "停机不该等完整个退避窗口（{:?}）：stop 信号必须能打断退避睡眠",
+        elapsed
+    );
+    assert!(
+        state.plugin.supervised().await.is_empty(),
+        "停机后监督任务必须收尾，不能 detach 后继续跑"
+    );
+
+    // 退避窗口（3s）整个过去：不得再有新的 spawn，也不得有活着的残留进程。
+    tokio::time::sleep(Duration::from_millis(3_600)).await;
+    assert_eq!(
+        count(&log, "start"),
+        spawns_before_stop,
+        "stop 之后不得重启插件（孤儿复活的来源）: {:?}",
+        log_events(&log)
+    );
+    for pid in pids_before_stop {
+        assert!(!pid_alive(pid), "停机后插件进程不得残留：pid {pid}");
+    }
+
+    // 账面也要收尾：不该留一个「running + 有待定重启」的假象。
+    let status = status_of(&state, "fake-plugin");
+    assert_eq!(status.state, PluginState::Stopped, "退避中被停机：落 stopped");
+    assert!(status.next_restart_at.is_none(), "不再排重启");
+}
