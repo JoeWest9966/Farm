@@ -789,6 +789,82 @@
       "title": "MergeProposal",
       "type": "object"
     },
+    "MergeProposalDetail": {
+      "additionalProperties": false,
+      "description": "提议详情（面板审阅队列呈现：记录字段 + diff，#25）。",
+      "properties": {
+        "diff": {
+          "description": "提议的 diff：集成分支 tip 与 worktree 分支 tip 的差异（面板呈现）。",
+          "type": "string"
+        },
+        "integration_branch": {
+          "type": "string"
+        },
+        "merge_commit": {
+          "description": "完成信号（`merged` 时必有）：集成分支上的 merge commit。",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "proposal_id": {
+          "type": "string"
+        },
+        "rejection_detail": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rejection_stage": {
+          "description": "拒收梯级（机械闸门或人工拒绝）。",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/MergeProposalState"
+        },
+        "ticket_id": {
+          "type": "string"
+        },
+        "worktree_branch": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "proposal_id",
+        "ticket_id",
+        "worktree_branch",
+        "integration_branch",
+        "state",
+        "message",
+        "diff"
+      ],
+      "title": "MergeProposalDetail",
+      "type": "object"
+    },
+    "MergeProposalListResponse": {
+      "additionalProperties": false,
+      "description": "审阅队列（面板主视图，#25）。",
+      "properties": {
+        "proposals": {
+          "items": {
+            "$ref": "#/$defs/MergeProposalDetail"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "proposals"
+      ],
+      "title": "MergeProposalListResponse",
+      "type": "object"
+    },
     "MergeProposalResponse": {
       "additionalProperties": false,
       "description": "提议受理结果。",
@@ -825,6 +901,53 @@
         }
       ],
       "title": "MergeProposalState"
+    },
+    "MergeReviewDecision": {
+      "additionalProperties": false,
+      "description": "人工审阅决策（approve/reject 请求体；宿主管理 API，#25）。\n\n管理面操作经**管理 token**（ADR-0002 §1：管理面与契约边界分明），不是契约后门。",
+      "properties": {
+        "reason": {
+          "description": "拒绝理由（approve 时省略；reject 时可省略，宿主给通用理由）。",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reviewer": {
+          "description": "审阅人（面板操作者；进审批账）。",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reviewer"
+      ],
+      "title": "MergeReviewDecision",
+      "type": "object"
+    },
+    "MergeReviewResponse": {
+      "additionalProperties": false,
+      "description": "审阅操作结果（approve/reject 响应，#25）。",
+      "properties": {
+        "merge_commit": {
+          "description": "批准且机械闸门过 → merge commit（完成信号）；拒绝/机械拒收 → `None`。",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "proposal_id": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/MergeProposalState"
+        }
+      },
+      "required": [
+        "proposal_id",
+        "state"
+      ],
+      "title": "MergeReviewResponse",
+      "type": "object"
     },
     "NewEvent": {
       "additionalProperties": false,

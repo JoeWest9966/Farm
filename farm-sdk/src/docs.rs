@@ -36,7 +36,10 @@ use crate::services::agent_runner::{
     AbortRequest, AttemptState, ClearQueueResponse, DispatchRequest, DispatchResponse, SteerRequest,
 };
 use crate::services::events::{EventHistoryQuery, EventHistoryResponse};
-use crate::services::merge::{MergeProposal, MergeProposalResponse, MergeProposalState};
+use crate::services::merge::{
+    MergeProposal, MergeProposalDetail, MergeProposalListResponse, MergeProposalResponse,
+    MergeProposalState, MergeReviewDecision, MergeReviewResponse,
+};
 use crate::services::tracker::{
     ClaimRequest, ClaimResponse, IssueListResponse, IssueState, IssueView, ReleaseOutcome,
     ReleaseRequest, ReleaseResponse,
@@ -116,6 +119,10 @@ fn named_type_schemas() -> Vec<(&'static str, serde_json::Value)> {
         ("MergeProposalState", schema_value::<MergeProposalState>()),
         ("MergeProposal", schema_value::<MergeProposal>()),
         ("MergeProposalResponse", schema_value::<MergeProposalResponse>()),
+        ("MergeReviewDecision", schema_value::<MergeReviewDecision>()),
+        ("MergeProposalDetail", schema_value::<MergeProposalDetail>()),
+        ("MergeProposalListResponse", schema_value::<MergeProposalListResponse>()),
+        ("MergeReviewResponse", schema_value::<MergeReviewResponse>()),
         ("WorktreeState", schema_value::<WorktreeState>()),
         ("WorktreeRef", schema_value::<WorktreeRef>()),
         ("WorkspaceMapping", schema_value::<WorkspaceMapping>()),
