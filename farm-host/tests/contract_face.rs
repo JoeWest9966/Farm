@@ -46,13 +46,6 @@ async fn body_json<T: serde::de::DeserializeOwned>(response: axum::http::Respons
     serde_json::from_slice(&bytes).expect("json body")
 }
 
-async fn body_text(response: axum::http::Response<Body>) -> String {
-    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("body bytes");
-    String::from_utf8(bytes.to_vec()).expect("utf8 body")
-}
-
 fn handshake_request_body(contract_version: &str) -> String {
     serde_json::to_string(&HandshakeRequest {
         contract_version: contract_version.to_string(),
@@ -253,10 +246,11 @@ async fn an_empty_token_header_is_unauthorized() {
 #[tokio::test]
 async fn every_placeholder_contract_route_answers_not_implemented_with_the_op_token() {
     for route in CONTRACT_ROUTES {
-        // 已由对应服务票打通的路由不再是占位：WS 事件流、tracker 视图/claim、workspace 映射。
+        // 已打通的路由不再是占位：事件投影两条（#15）、tracker 两条（#13）、workspace 映射（#14）。
         if matches!(
             route.path,
             "/v1/events/stream"
+                | "/v1/events/history"
                 | "/v1/tracker/issues"
                 | "/v1/tracker/claims"
                 | "/v1/workspace/mappings"
@@ -342,9 +336,9 @@ async fn a_known_route_with_the_wrong_method_is_a_closed_set_method_not_allowed(
 #[tokio::test]
 async fn error_envelopes_are_the_same_shape_on_every_face() {
     let responses = [
-        (Method::GET, "/v1/tracker/issues", None),          // unauthorized
-        (Method::GET, "/v1/events/history", Some(OP_TOKEN)), // not_implemented
-        (Method::GET, "/v1/nope", Some(OP_TOKEN)),           // not_found
+        (Method::GET, "/v1/tracker/issues", None),            // unauthorized
+        (Method::POST, "/v1/merge/proposals", Some(OP_TOKEN)),     // not_implemented
+        (Method::GET, "/v1/nope", Some(OP_TOKEN)),                 // not_found
     ];
     let mut codes = Vec::new();
     for (method, uri, token) in responses {

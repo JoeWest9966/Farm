@@ -3,9 +3,9 @@
 //! axum 承载三个面：
 //!
 //! 1. **编排器契约面**：`POST /handshake` + `CONTRACT_ROUTES` 九条路由（其中
-//!    `GET /v1/events/stream` 是 WS，`GET /v1/workspace/mappings`（#14 映射视图）、
-//!    tracker 的 `GET /v1/tracker/issues` 与 `POST /v1/tracker/claims`（#13）也已真正打通；
-//!    其余返回闭集 `not_implemented`——服务域实现归 #15–#18。
+//!    `GET /v1/events/stream` 是 WS、`GET /v1/events/history` 是事件快照（#15 投影面），
+//!    `GET /v1/workspace/mappings`（#14 映射视图）、tracker 的 `GET /v1/tracker/issues` 与
+//!    `POST /v1/tracker/claims`（#13）也已真正打通；其余返回闭集 `not_implemented`——归 #16–#18。
 //! 2. **宿主管理 API**：`ADMIN_ROUTES` 两条，独立前缀 `/admin`；管理 token
 //!    校验机制是接口位，归 #23。
 //! 3. **面板伺服**：`build.rs` 把 `farm-panel` 编成 wasm 并嵌入，`/` 伺服。
@@ -20,6 +20,7 @@ pub mod admin;
 pub mod auth;
 pub mod contract;
 pub mod error;
+pub mod events;
 pub mod events_ws;
 pub mod panel;
 pub mod workspace;
@@ -35,9 +36,10 @@ use farm_sdk::HANDSHAKE_PATH;
 pub use error::ApiError;
 pub use panel::PanelAssets;
 
-/// 契约面上已真正打通的 route：WS 事件流（#11）、tracker 两条（#13）、workspace 映射（#14）；
-/// 其余仍是占位（返回闭集 `not_implemented`）。
+/// 契约面上已真正打通的 route：WS 事件流 + 事件快照（#15）、tracker 两条（#13）、
+/// workspace 映射（#14）；其余仍是占位（返回闭集 `not_implemented`）。
 const EVENTS_STREAM_PATH: &str = "/v1/events/stream";
+const EVENTS_HISTORY_PATH: &str = "/v1/events/history";
 const TRACKER_ISSUES_PATH: &str = "/v1/tracker/issues";
 const TRACKER_CLAIMS_PATH: &str = "/v1/tracker/claims";
 
@@ -54,6 +56,7 @@ pub fn build_router(state: AppState) -> Router {
     for route in CONTRACT_ROUTES {
         let endpoint = match route.path {
             EVENTS_STREAM_PATH => get(events_ws::events_stream),
+            EVENTS_HISTORY_PATH => get(events::events_history),
             TRACKER_ISSUES_PATH => get(contract::tracker_issues),
             TRACKER_CLAIMS_PATH => post(contract::tracker_claims),
             WORKSPACE_MAPPINGS_PATH => get(workspace::list_mappings),

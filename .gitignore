@@ -15,6 +15,6 @@ Thumbs.db
 # Local scratch that is not part of the plan
 .scratch/tmp/
 
-# Per-ticket implementer scratch notes (gitignored)
+# Implementer scratch (keep progress.md out of history)
 progress.md
 /progress.md

@@ -31,15 +31,15 @@
 
 | 服务 | 方法 | 路径 | 说明 | 本票状态 |
 | --- | --- | --- | --- | --- |
-| tracker | GET | `/v1/tracker/issues` | 归一化 Issue 视图（面板与编排器读同一视图） | 占位：`not_implemented` |
-| tracker | POST | `/v1/tracker/claims` | 原子 claim（CAS 语义，assignee 即 claim） | 占位：`not_implemented` |
+| tracker | GET | `/v1/tracker/issues` | 归一化 Issue 视图（面板与编排器读同一视图） | 已通：归一化 Issue 视图（#13） |
+| tracker | POST | `/v1/tracker/claims` | 原子 claim（CAS 语义，assignee 即 claim） | 已通：原子 claim（#13） |
 | agent-runner | POST | `/v1/agent-runner/dispatches` | 派发 agent（本地后端 spawn pi --mode rpc） | 占位：`not_implemented` |
 | agent-runner | POST | `/v1/agent-runner/attempts/{attempt_id}/steer` | 向运行中的 attempt 注入指令 | 占位：`not_implemented` |
 | agent-runner | POST | `/v1/agent-runner/attempts/{attempt_id}/abort` | 中止 attempt（abort 探针） | 占位：`not_implemented` |
 | merge | POST | `/v1/merge/proposals` | agent 提议 merge（宿主校验后执行） | 占位：`not_implemented` |
-| workspace | GET | `/v1/workspace/mappings` | spec ↔ 集成分支 ↔ worktrees 映射 | 骨架已通 |
-| events | GET | `/v1/events/stream` | WS 单连接订阅事件总线（握手同样验 token） | 骨架已通（WS 验 token + 事件流） |
-| events | GET | `/v1/events/history` | 事件历史查询（有界保留窗口） | 占位：`not_implemented` |
+| workspace | GET | `/v1/workspace/mappings` | spec ↔ 集成分支 ↔ worktrees 映射 | 已通：workspace 映射视图（#14） |
+| events | GET | `/v1/events/stream` | WS 单连接订阅事件总线（握手同样验 token） | 已通：WS 单连接事件投影（#15） |
+| events | GET | `/v1/events/history` | 事件历史查询（有界保留窗口） | 已通：事件历史快照 API（#15） |
 
 ## 宿主管理 API（host admin API，接口位）
 

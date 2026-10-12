@@ -1,6 +1,8 @@
 //! 测试共用夹具：真实 router + 内存宿主私有存储。
 //!
-//! 集成测试（`tests/*.rs`）各自是独立 crate，共用逻辑放这里。
+//! 集成测试（`tests/*.rs`）各自是独立 crate，共用逻辑放这里：用不到的夹具在
+//! 单个测试 crate 里就是死代码，所以这里统一放行（不是缺陷，是分工）。
+#![allow(dead_code)]
 
 use farm_core::{AppState, HostConfig};
 use farm_host::build_router;
