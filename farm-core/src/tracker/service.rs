@@ -83,6 +83,8 @@ impl TrackerService {
     /// - 同一 assignee 重复 claim → 幂等，同样返回（不写新历史）；
     /// - 已被他人持有 → [`TrackerError::Conflict`]（GLOSSARY：失败即已被他人抢走）。
     pub fn claim(&self, issue_id: &str, assignee: &str) -> Result<Issue, TrackerError> {
+        // claim 的对象是归一化视图里的票：先拉平，provider 上存在的票才能被抢。
+        self.sync()?;
         match self.store.claim(issue_id, assignee, &now_rfc3339())? {
             ClaimOutcome::Acquired | ClaimOutcome::AlreadyHeldByClaimant => {
                 Ok(self.require_issue(issue_id)?)
@@ -103,6 +105,7 @@ impl TrackerService {
     /// - 无人持有 → 幂等空操作（重复 release 不报错）；
     /// - 持着票的是别人 → [`TrackerError::Conflict`]。
     pub fn release(&self, issue_id: &str, assignee: &str) -> Result<ReleaseOutcome, TrackerError> {
+        self.sync()?;
         let outcome = self.store.release(issue_id, assignee, &now_rfc3339())?;
         match outcome {
             ReleaseOutcome::Released | ReleaseOutcome::NotClaimed => Ok(outcome),
