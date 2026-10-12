@@ -40,6 +40,7 @@
 | agent-runner | POST | `/v1/agent-runner/attempts/{attempt_id}/follow-up` | follow_up：等 attempt 停下才送达的追加任务 | 已通：follow_up 注入（#22） |
 | agent-runner | POST | `/v1/agent-runner/attempts/{attempt_id}/clear-queue` | clear_queue：清掉 attempt 上排队的注入，回报清了几条 | 已通：clear_queue（#22） |
 | merge | POST | `/v1/merge/proposals` | agent 提议 merge（宿主校验后执行） | 占位：`not_implemented` |
+| merge | POST | `/v1/merge/reviews` | agent 提交 merge 提议进人工审阅队列（不自动执行；批准/拒绝走宿主管理 API，#25） | 占位：`not_implemented` |
 | workspace | GET | `/v1/workspace/mappings` | spec ↔ 集成分支 ↔ worktrees 映射 | 已通：workspace 映射视图（#14） |
 | events | GET | `/v1/events/stream` | WS 单连接订阅事件总线（握手同样验 token） | 已通：WS 单连接事件投影（#15） |
 | events | GET | `/v1/events/history` | 事件历史查询（有界保留窗口） | 已通：事件历史快照 API（#15） |
@@ -64,6 +65,10 @@
 | POST | `/admin/services/{name}/stop` | 停机一个服务（服务启停，#23；宿主持有开关，发 needs_attention） | 已通：停机一个服务（#23） |
 | POST | `/admin/services/{name}/start` | 启动一个服务（服务启停，#23） | 已通：启动一个服务（#23） |
 | GET | `/admin/workflow/config/{repo_id}` | 查询某被编排仓库当前生效的 workflow 配置与 LKG 状态（ticket #12） | 已通：workflow 配置 + LKG 查询（#12） |
+| GET | `/admin/merge/proposals` | merge 审阅队列（人在面板上审阅提议，#25） | 占位：`not_implemented` |
+| GET | `/admin/merge/proposals/{id}` | 单个 merge 提议详情 + diff（面板审阅呈现，#25） | 占位：`not_implemented` |
+| POST | `/admin/merge/proposals/{id}/approve` | 批准 merge 提议：记审批决策入 Kron + 跑机械闸门出 merge commit（#25） | 占位：`not_implemented` |
+| POST | `/admin/merge/proposals/{id}/reject` | 拒绝 merge 提议：记审批决策入 Kron + 闭集错误回 agent（#25） | 占位：`not_implemented` |
 | GET | `/admin/notifier/channel/{repo_id}` | 查询某被编排仓库的通知通道配置：enabled + 过滤集（GLOSSARY「通知通道」，ticket #21） | 已通：通知通道配置 view/set（#21，宿主零推送域知识） |
 | POST | `/admin/notifier/channel/{repo_id}` | 设置某被编排仓库的通知通道配置：enabled + 过滤集（重启后生效，ticket #21） | 已通：通知通道配置 view/set（#21，宿主零推送域知识） |
 

@@ -47,8 +47,7 @@ fn run(cwd: &Path, args: &[&str]) -> Result<GitOutput, MergeError> {
 }
 
 /// 把任意 revision 解析成 commit sha；解析不了（对象不存在/不是 commit）返回 `None`。
-pub fn rev_parse(cwd: &Path, rev: &str) -> Result<Option<String>, MergeError> {
-    let out = run(cwd, &["rev-parse", "--verify", "--quiet", &format!("{rev}^{{commit}}")])?;
+pub fn rev_parse(cwd: &Path, rev: &str) -> Result<Option<String>, MergeError> {    let out = run(cwd, &["rev-parse", "--verify", "--quiet", &format!("{rev}^{{commit}}")])?;
     if out.ok() && !out.stdout.is_empty() {
         Ok(Some(out.stdout))
     } else {
@@ -161,6 +160,22 @@ pub fn merge_no_ff(cwd: &Path, branch: &str, message: &str) -> Result<String, Me
         )));
     }
     head(cwd)
+}
+
+/// 两个分支 tip 之间的 diff（面板呈现提议改动用，#25）。
+///
+/// 用两档 `git diff <base> <head>`：面板要展示的是「并入集成分支会引入什么」，
+/// 即集成分支 tip 与 worktree 分支 tip 的差异。失败即宿主故障。
+pub fn diff_between(cwd: &Path, base: &str, head: &str) -> Result<String, MergeError> {
+    let out = run(cwd, &["diff", base, head])?;
+    if !out.ok() {
+        return Err(MergeError::Failed(format!(
+            "git diff {base} {head} failed in {}: {}",
+            cwd.display(),
+            out.stderr
+        )));
+    }
+    Ok(out.stdout)
 }
 
 #[cfg(test)]

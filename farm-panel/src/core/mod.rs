@@ -28,13 +28,18 @@
 //! | [`drill`] | 单票下钻：attempts 时间线、轮次、只读 transcript、workspace |
 //! | [`rhythm`] | 连接节律：什么时候该取快照、什么时候该拉增量（WS 不可用时） |
 
+pub mod admin;
 pub mod client;
+#[cfg(target_arch = "wasm32")]
+pub mod transport;
 pub mod tokens;
 
 pub use client::{
     parse_ws_frame, ContractClient, Decoded, HttpRequest, HttpResponse, PanelError, PanelOp,
     WsFrame, OP_TOKEN_HEADER, PANEL_CLIENT_NAME,
 };
+
+pub use admin::{AdminClient, AdminDecoded, AdminOp, ADMIN_TOKEN_HEADER};
 
 pub use tokens::{
     day_key, tokens_from_event, tokens_summary, TokenAggregate, TokenPayload, TokenTotals,

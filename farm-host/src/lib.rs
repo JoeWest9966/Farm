@@ -64,6 +64,8 @@ const TRACKER_RELEASE_PATH: &str = "/v1/tracker/releases";
 
 /// Merge 服务提议路由（ticket #18 打通）：`POST /v1/merge/proposals`。
 const MERGE_PROPOSALS_PATH: &str = "/v1/merge/proposals";
+/// Agent 提交 merge 提议进人工审阅队列（ticket #25 打通）：`POST /v1/merge/reviews`。
+const MERGE_REVIEWS_PATH: &str = "/v1/merge/reviews";
 
 /// 装配宿主路由：三个面 + 统一的闭集 404/405 兜底。
 ///
@@ -86,6 +88,7 @@ pub fn build_router(state: AppState) -> Router {
             AGENT_FOLLOW_UP_PATH => post(agent_runner::follow_up),
             AGENT_CLEAR_QUEUE_PATH => post(agent_runner::clear_queue),
             MERGE_PROPOSALS_PATH => post(merge::propose),
+            MERGE_REVIEWS_PATH => post(merge::submit_review),
             _ => match route.method {
                 "GET" => get(contract::not_implemented_placeholder),
                 "POST" => post(contract::not_implemented_placeholder),
@@ -118,6 +121,10 @@ pub fn build_router(state: AppState) -> Router {
             ("POST", "/admin/services/{name}/stop") => post(admin::stop_service),
             ("POST", "/admin/services/{name}/start") => post(admin::start_service),
             ("GET", "/admin/workflow/config/{repo_id}") => get(workflow::config_status),
+            ("GET", "/admin/merge/proposals") => get(admin::merge_proposals),
+            ("GET", "/admin/merge/proposals/{id}") => get(admin::merge_proposal),
+            ("POST", "/admin/merge/proposals/{id}/approve") => post(admin::approve_proposal),
+            ("POST", "/admin/merge/proposals/{id}/reject") => post(admin::reject_proposal),
             ("GET", "/admin/notifier/channel/{repo_id}") => get(notifier::channel_config),
             ("POST", "/admin/notifier/channel/{repo_id}") => post(notifier::set_channel_config),
             _ => panic!(

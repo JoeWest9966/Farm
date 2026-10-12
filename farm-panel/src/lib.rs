@@ -12,8 +12,8 @@ pub mod core;
 
 use farm_sdk::{EventKind, ServiceName, CONTRACT_VERSION, SDK_VERSION};
 
-/// 占位页标题。宿主 embed 的 `index.html` 与面板自身渲染同一份自描述。
-pub const PANEL_TITLE: &str = "Farm 操作台 — 占位页";
+/// 面板标题。宿主 embed 的 `index.html` 与面板自身渲染同一份自描述。
+pub const PANEL_TITLE: &str = "Farm 操作台";
 
 /// 占位页正文行：契约版本、五服务、事件闭集、接入方式。
 ///
@@ -37,7 +37,7 @@ pub fn panel_lines() -> Vec<String> {
 #[cfg(target_arch = "wasm32")]
 use dioxus::prelude::*;
 
-/// 占位页根组件。
+/// 占位页根组件：自描述 + 操作台（merge 审阅流 + 宿主管理面，ticket #25）。
 #[cfg(target_arch = "wasm32")]
 #[component]
 fn App() -> Element {
@@ -48,6 +48,145 @@ fn App() -> Element {
                 for line in panel_lines() {
                     li { key: "{line}", "{line}" }
                 }
+            }
+            OperatorConsole {}
+        }
+    }
+}
+
+/// 提议在看板/审阅队列里的一行标题（纯函数，便于断言）。
+#[cfg(target_arch = "wasm32")]
+fn proposal_heading(detail: &farm_sdk::services::merge::MergeProposalDetail) -> String {
+    format!("票 {} · {:?}", detail.ticket_id, detail.state)
+}
+
+/// 单条 merge 提议审阅卡：呈现 diff + （待审时）批准/拒绝按钮。
+/// 跑一次批准/拒绝：拼 ADMIN 请求 → 传输 → 解 → 把结论写进消息信号（wasm 侧）。
+#[cfg(target_arch = "wasm32")]
+async fn do_review(
+    base: Signal<String>,
+    admin_token: Signal<String>,
+    mut message: Signal<String>,
+    proposal_id: String,
+    approve: bool,
+) {
+    use crate::core::admin::{AdminClient, AdminDecoded, AdminOp};
+    use crate::core::transport;
+    let client = AdminClient::new(base(), admin_token());
+    let op = if approve {
+        AdminOp::ApproveMerge { proposal_id, reviewer: "panel-operator".into() }
+    } else {
+        AdminOp::RejectMerge { proposal_id, reviewer: "panel-operator".into(), reason: None }
+    };
+    let req = client.request_for(&op);
+    let verdict = match transport::send(client.base_url(), &req).await {
+        Ok(resp) => match client.decode(&op, resp) {
+            Ok(AdminDecoded::Reviewed(r)) => format!("{} → {:?}", r.proposal_id, r.state),
+            Ok(_) => "unexpected admin response".to_string(),
+            Err(e) => format!("{e}"),
+        },
+        Err(e) => e,
+    };
+    message.set(verdict);
+}
+
+/// 单条 merge 提议审阅卡：呈现 diff + （待审时）批准/拒绝按钮。
+///
+/// 自持（Copy 的 signal 作 props）：批准/拒绝经 [`do_review`] 打 ADMIN API（管理 token）。
+#[cfg(target_arch = "wasm32")]
+#[component]
+fn ProposalCard(
+    detail: farm_sdk::services::merge::MergeProposalDetail,
+    base: Signal<String>,
+    admin_token: Signal<String>,
+    message: Signal<String>,
+) -> Element {
+    let key = detail.proposal_id.clone();
+    let awaiting = detail.state == farm_sdk::services::merge::MergeProposalState::Proposed;
+    let approve = {
+        let id = detail.proposal_id.clone();
+        move |_| {
+            spawn(do_review(base, admin_token, message, id.clone(), true));
+        }
+    };
+    let reject = {
+        let id = detail.proposal_id.clone();
+        move |_| {
+            spawn(do_review(base, admin_token, message, id.clone(), false));
+        }
+    };
+    rsx! {
+        article { key: "{key}",
+            h3 { "{proposal_heading(&detail)}" }
+            pre { "{detail.diff}" }
+            if awaiting {
+                button { onclick: approve, "批准" }
+                button { onclick: reject, "拒绝" }
+            }
+        }
+    }
+}
+
+/// 操作台（ticket #25 批次三）：merge 审阅流 + 宿主管理面，全经管理 token 打 ADMIN API。
+///
+/// 请求由数据核（[`AdminClient`]）拼、字节由传输层（[`transport::send`]）搬；本组件
+/// 只持少量 UI 状态（base url / 管理 token / 队列 / 消息），不碰路径、不碰 schema。
+/// op token 与管理 token 都不落盘，由使用者输入（spec 安全裁决）。
+#[cfg(target_arch = "wasm32")]
+#[component]
+fn OperatorConsole() -> Element {
+    use crate::core::admin::{AdminClient, AdminDecoded, AdminOp};
+    use crate::core::transport;
+    use farm_sdk::services::merge::MergeProposalDetail;
+
+    let mut base = use_signal(|| "http://127.0.0.1:3721".to_string());
+    let mut admin_token = use_signal(String::new);
+    let mut queue = use_signal(Vec::<MergeProposalDetail>::new);
+    let mut message = use_signal(String::new);
+
+    // 加载审阅队列：GET /admin/merge/proposals（管理 token）。
+    let load_queue = move |_| {
+        let base = base();
+        let token = admin_token();
+        spawn(async move {
+            let client = AdminClient::new(base, token);
+            let op = AdminOp::LoadMergeQueue;
+            let req = client.request_for(&op);
+            match transport::send(client.base_url(), &req).await {
+                Ok(resp) => match client.decode(&op, resp) {
+                    Ok(AdminDecoded::MergeQueue(q)) => {
+                        message.set(format!("审阅队列：{} 条待审", q.proposals.len()));
+                        queue.set(q.proposals);
+                    }
+                    Ok(_) => message.set("unexpected admin response".into()),
+                    Err(e) => message.set(format!("{e}")),
+                },
+                Err(e) => message.set(e),
+            }
+        });
+    };
+
+    rsx! {
+        section {
+            h2 { "merge 审阅流（ticket #25）" }
+            p { "人工闸门叠加在机械闸门之上：批准后机械校验照跑出 merge commit，拒绝走闭集错误回 agent。" }
+            div { class: "console-auth",
+                input { value: "{base}", oninput: move |e| base.set(e.value()) }
+                input { r#type: "password", placeholder: "管理 token（不落盘）", value: "{admin_token}", oninput: move |e| admin_token.set(e.value()) }
+                button { onclick: load_queue, "加载审阅队列" }
+            }
+            p { class: "console-message", "{message}" }
+            for detail in queue() {
+                ProposalCard { detail: detail, base: base, admin_token: admin_token, message: message }
+            }
+        }
+        section {
+            h2 { "宿主管理面（#23/#25）" }
+            ul {
+                li { "插件装卸 / quarantined 一键恢复（/admin/plugins）" }
+                li { "tracker provider 配置（/admin/tracker/provider）" }
+                li { "服务启停（/admin/services）" }
+                li { "通知通道配置（依赖 #21）" }
             }
         }
     }

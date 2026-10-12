@@ -10,7 +10,7 @@ use axum::body::Bytes;
 use axum::extract::State;
 use axum::Json;
 use farm_core::AppState;
-use farm_sdk::services::merge::{MergeProposal, MergeProposalResponse};
+use farm_sdk::services::merge::{MergeProposal, MergeProposalResponse, MergeProposalState};
 use farm_sdk::ContractError;
 
 use crate::error::ApiError;
@@ -36,5 +36,29 @@ pub async fn propose(
     Ok(Json(MergeProposalResponse {
         proposal_id: report.proposal_id,
         state: report.state,
+    }))
+}
+
+/// `POST /v1/merge/reviews`（ticket #25）：agent 提交 merge 提议进**人工审阅队列**。
+///
+/// 与 `/v1/merge/proposals`（自动合入）不同：这里只 write-ahead 落账（state=proposed）
+/// + 发审阅期 needs_attention，**不**跑机械闸门、不执行。批准/拒绝走宿主管理 API
+/// （人工闸门，admin token）。完成信号仍由批准后的机械 merge 产生。
+pub async fn submit_review(
+    State(state): State<AppState>,
+    body: Bytes,
+) -> Result<Json<MergeProposalResponse>, ApiError> {
+    let proposal: MergeProposal = serde_json::from_slice(&body).map_err(|e| {
+        ApiError(ContractError::invalid_request(format!(
+            "malformed merge proposal: {e}"
+        )))
+    })?;
+    let proposal_id = state
+        .merge
+        .submit_for_review(&state, &proposal)
+        .map_err(|err| ApiError(err.to_contract_error()))?;
+    Ok(Json(MergeProposalResponse {
+        proposal_id,
+        state: MergeProposalState::Proposed,
     }))
 }

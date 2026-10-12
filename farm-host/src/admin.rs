@@ -14,6 +14,7 @@
 
 use std::sync::LazyLock;
 
+use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::extract::Request;
 use axum::http::{HeaderMap, HeaderName};
@@ -24,6 +25,9 @@ use farm_core::AppState;
 use farm_sdk::admin::{
     AdminPluginListResponse, AdminStatusResponse, PluginSummary, ServiceControlStatus,
     ServiceControlStatusEntry, TrackerProviderConfig, TrackerProviderSelection,
+};
+use farm_sdk::services::merge::{
+    MergeProposalDetail, MergeProposalListResponse, MergeReviewDecision, MergeReviewResponse,
 };
 use farm_sdk::{AuthScheme, ContractError, ServiceName, CONTRACT_VERSION, HOST_VERSION};
 
@@ -222,6 +226,114 @@ fn parse_service(name: &str) -> Result<ServiceName, ApiError> {
                 "unknown service {name:?}; known: tracker, agent-runner, merge, workspace, events"
             )))
         })
+}
+
+// ---------------------------------------------------------------------------
+// Merge 审阅流（ticket #25）：人工闸门叠加在机械闸门之上，全部经管理 token。
+// ---------------------------------------------------------------------------
+
+/// 把一条提议记录 + 它的 diff 投影成面板审阅详情。
+fn proposal_detail(
+    state: &AppState,
+    record: &farm_core::merge::MergeProposalRecord,
+) -> MergeProposalDetail {
+    // diff 取不到（分支没了等）不阻塞审阅：面板显示空 diff，其余字段照常。
+    let diff = state.merge.diff(&record.proposal_id).unwrap_or_default();
+    MergeProposalDetail {
+        proposal_id: record.proposal_id.clone(),
+        ticket_id: record.ticket_id.clone(),
+        worktree_branch: record.worktree_branch.clone(),
+        integration_branch: record.integration_branch.clone(),
+        state: record.state,
+        message: record.message.clone(),
+        merge_commit: record.merge_commit.clone(),
+        rejection_stage: record.rejection_stage.clone(),
+        rejection_detail: record.rejection_detail.clone(),
+        diff,
+    }
+}
+
+fn parse_decision(body: Bytes) -> Result<MergeReviewDecision, ApiError> {
+    serde_json::from_slice(&body).map_err(|e| {
+        ApiError(ContractError::invalid_request(format!(
+            "malformed review decision: {e}"
+        )))
+    })
+}
+
+/// `GET /admin/merge/proposals`：merge 审阅队列（面板主视图，呈现每条提议的 diff）。
+pub async fn merge_proposals(
+    State(state): State<AppState>,
+) -> Result<Json<MergeProposalListResponse>, ApiError> {
+    let records = state.merge.proposals().map_err(ApiError::from)?;
+    let proposals = records.iter().map(|r| proposal_detail(&state, r)).collect();
+    Ok(Json(MergeProposalListResponse { proposals }))
+}
+
+/// `GET /admin/merge/proposals/{id}`：单个提议详情 + diff（面板审阅呈现）。
+pub async fn merge_proposal(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<MergeProposalDetail>, ApiError> {
+    let record = state
+        .merge
+        .proposal(&id)
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError(ContractError::not_found(format!("no merge proposal `{id}`"))))?;
+    Ok(Json(proposal_detail(&state, &record)))
+}
+
+/// `POST /admin/merge/proposals/{id}/approve`：批准——记审批决策入 Kron 审批账，
+/// 再跑机械闸门（批准≠必合入；任一机械校验不过照样拒收、无完成信号）。
+pub async fn approve_proposal(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    body: Bytes,
+) -> Result<Json<MergeReviewResponse>, ApiError> {
+    let decision = parse_decision(body)?;
+    let report = state
+        .merge
+        .approve(&state, &id, &decision.reviewer)
+        .await
+        .map_err(|err| ApiError(err.to_contract_error()))?;
+    Ok(Json(MergeReviewResponse {
+        proposal_id: report.proposal_id,
+        state: report.state,
+        merge_commit: report.merge_commit,
+    }))
+}
+
+/// `POST /admin/merge/proposals/{id}/reject`：拒绝——记审批决策入 Kron 审批账 +
+/// 标 rejected + 闭集错误回 agent。无完成信号。
+pub async fn reject_proposal(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    body: Bytes,
+) -> Result<Json<MergeReviewResponse>, ApiError> {
+    let decision = parse_decision(body)?;
+    state
+        .merge
+        .reject(
+            &state,
+            &id,
+            &decision.reviewer,
+            decision.reason.as_deref().unwrap_or(""),
+        )
+        .map_err(|err| ApiError(err.to_contract_error()))?;
+    let record = state
+        .merge
+        .proposal(&id)
+        .map_err(ApiError::from)?
+        .ok_or_else(|| {
+            ApiError(ContractError::not_found(format!(
+                "no merge proposal `{id}`"
+            )))
+        })?;
+    Ok(Json(MergeReviewResponse {
+        proposal_id: record.proposal_id,
+        state: record.state,
+        merge_commit: record.merge_commit,
+    }))
 }
 
 /// 插件宿主错误 → 契约闭集错误的投影。
