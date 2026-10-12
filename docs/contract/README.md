@@ -50,6 +50,7 @@
 | --- | --- | --- | --- |
 | GET | `/admin/plugins` | 插件清单与状态（装卸能力占位） | 占位：`not_implemented` |
 | GET | `/admin/status` | 宿主管理面自描述（契约版本 + 五服务） | 占位：`not_implemented` |
+| GET | `/admin/workflow/config/{repo_id}` | 查询某被编排仓库当前生效的 workflow 配置与 LKG 状态（ticket #12） | 占位：`not_implemented` |
 
 ## 闭集错误码（closed-set error codes）
 

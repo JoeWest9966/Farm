@@ -278,6 +278,22 @@
       "title": "DispatchResponse",
       "type": "object"
     },
+    "EffectiveSource": {
+      "description": "当前生效配置的来源。",
+      "oneOf": [
+        {
+          "const": "fresh",
+          "description": "仓库当前配置合法，直接生效。",
+          "type": "string"
+        },
+        {
+          "const": "last_known_good",
+          "description": "仓库当前配置非法，回退到 last-known-good 生效。",
+          "type": "string"
+        }
+      ],
+      "title": "EffectiveSource"
+    },
     "ErrorCode": {
       "description": "契约错误码闭集。\n\n字符串形式即编排器看到的 `code` 字段（snake_case）。`ALL` 是唯一权威清单，\n一致性套件与生成文档都以它为准。",
       "oneOf": [
@@ -671,6 +687,21 @@
       "title": "IssueView",
       "type": "object"
     },
+    "LastKnownGoodInfo": {
+      "additionalProperties": false,
+      "description": "last-known-good 的落库信息（per-仓库，ADR-0005 §2/§6）。",
+      "properties": {
+        "updated_at": {
+          "description": "最近一次写入/更新时间（RFC3339）。",
+          "type": "string"
+        }
+      },
+      "required": [
+        "updated_at"
+      ],
+      "title": "LastKnownGoodInfo",
+      "type": "object"
+    },
     "MappingListResponse": {
       "additionalProperties": false,
       "description": "`GET /v1/workspace/mappings` 的响应信封（占位）。",
@@ -837,6 +868,61 @@
       "title": "PluginSummary",
       "type": "object"
     },
+    "ProjectionSwitches": {
+      "description": "投影开关：宿主在 attempt 完成后机械执行的投影动作（ADR-0001 决策 2，归 #18）。\n全关 = 只产 merge commit，不关票/不开 PR/不评论/不打标签。缺字段默认 false（前向兼容）。",
+      "properties": {
+        "add_label": {
+          "default": false,
+          "description": "完成后打标签。",
+          "type": "boolean"
+        },
+        "close_issue": {
+          "default": false,
+          "description": "完成后关票。",
+          "type": "boolean"
+        },
+        "comment_merge_commit": {
+          "default": false,
+          "description": "完成后评论 merge commit 链接。",
+          "type": "boolean"
+        },
+        "open_pr": {
+          "default": false,
+          "description": "完成后开 PR。",
+          "type": "boolean"
+        }
+      },
+      "title": "ProjectionSwitches",
+      "type": "object"
+    },
+    "RetryBackoff": {
+      "description": "分级指数退避（编排器重试策略；整数倍以保持 `Eq`）。缺字段用默认值（前向兼容）。",
+      "properties": {
+        "backoff_multiplier": {
+          "default": 1,
+          "description": "退避倍率（>= 1；2 = 每次翻倍）。",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "base_delay_ms": {
+          "default": 0,
+          "description": "基础延迟（毫秒；启用重试时 >= 1）。",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_retries": {
+          "default": 0,
+          "description": "最大重试次数（0 = 不重试）。",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "title": "RetryBackoff",
+      "type": "object"
+    },
     "ServiceName": {
       "description": "v1 五服务（闭集）。",
       "oneOf": [
@@ -884,6 +970,122 @@
         "message"
       ],
       "title": "SteerRequest",
+      "type": "object"
+    },
+    "WorkflowConfig": {
+      "description": "被编排仓库的 workflow 配置（`.farm/workflow.json` 解析后的形状）。\n\n前向兼容：未知字段被忽略（不因仓库用了更新版字段名而判非法）；但四个核心字段\n（dispatch_labels / max_concurrency / stall_threshold_secs / prompt_template）缺失即解析\n失败。合法性由 `farm-core` 的语义校验判定（缺一即回退 LKG，绝不 panic）。",
+      "properties": {
+        "dispatch_labels": {
+          "description": "dispatchable 判定标签：至少一个（否则没有票可派发）。",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "max_concurrency": {
+          "description": "并发配额：同时派发的 attempt 上限（>= 1）。",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "projection": {
+          "$ref": "#/$defs/ProjectionSwitches",
+          "default": {
+            "add_label": false,
+            "close_issue": false,
+            "comment_merge_commit": false,
+            "open_pr": false
+          },
+          "description": "投影开关：attempt 完成后宿主机械执行的投影动作（归 #18 merge 服务；可省略）。"
+        },
+        "prompt_template": {
+          "description": "派发 prompt 模板（占位符由编排器展开，如 `{{ticket_id}}`）。",
+          "type": "string"
+        },
+        "retry_backoff": {
+          "$ref": "#/$defs/RetryBackoff",
+          "default": {
+            "backoff_multiplier": 1,
+            "base_delay_ms": 0,
+            "max_retries": 0
+          },
+          "description": "重试退避策略（可省略，用默认值）。"
+        },
+        "stall_threshold_secs": {
+          "description": "stall 阈值（秒）：attempt 静默超过它即判杀（>= 1）。",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "dispatch_labels",
+        "max_concurrency",
+        "stall_threshold_secs",
+        "prompt_template"
+      ],
+      "title": "WorkflowConfig",
+      "type": "object"
+    },
+    "WorkflowConfigStatus": {
+      "additionalProperties": false,
+      "description": "查询 API 的响应：某被编排仓库的当前生效配置 + LKG 状态。",
+      "properties": {
+        "effective": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkflowConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "当前生效配置；`None` = 尚无生效配置（首次即非法，拒绝编排）。"
+        },
+        "last_alert": {
+          "description": "最近一次配置告警的原因（非法回退/拒绝时）。",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_known_good": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LastKnownGoodInfo"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "落库的 last-known-good 信息（重启后仍可引导）。"
+        },
+        "loaded_at": {
+          "description": "本次生效配置的装载时间（RFC3339）。",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "repo_id": {
+          "type": "string"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EffectiveSource"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "生效配置来源。"
+        }
+      },
+      "required": [
+        "repo_id"
+      ],
+      "title": "WorkflowConfigStatus",
       "type": "object"
     },
     "WorkspaceMapping": {

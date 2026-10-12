@@ -13,6 +13,7 @@ pub mod events;
 pub mod migrations;
 pub mod state;
 pub mod workspace;
+pub mod workflow;
 
 pub use config::HostConfig;
 pub use db::{AppliedMigration, Database};

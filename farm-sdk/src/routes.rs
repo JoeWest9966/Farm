@@ -104,6 +104,11 @@ pub const ADMIN_ROUTES: &[AdminRouteSpec] = &[
         path: "/admin/status",
         summary: "宿主管理面自描述（契约版本 + 五服务）",
     },
+    AdminRouteSpec {
+        method: "GET",
+        path: "/admin/workflow/config/{repo_id}",
+        summary: "查询某被编排仓库当前生效的 workflow 配置与 LKG 状态（ticket #12）",
+    },
 ];
 
 /// 拼接某服务在契约前缀下的路径。
