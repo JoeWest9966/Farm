@@ -200,6 +200,22 @@ pub struct MergeService {
     epoch: u64,
 }
 
+/// 把一段**阻塞的 git 工作**丢到 blocking 池里跑（code review P2-10）。
+///
+/// `validate` / `propose` / `approve` 是 async fn、由 axum handler 调用；git 原语是
+/// `std::process::Command`（同步起子进程 + 同步等退出）。在 worker 线程上直接等，
+/// 一个慢 git（大仓库的 `status` / `diff`）就占死一个 worker。挪进 `spawn_blocking`
+/// 后调用方任务只是被 park，worker 回去服务别的请求。
+async fn git_blocking<T, F>(work: F) -> Result<T, MergeError>
+where
+    F: FnOnce() -> Result<T, MergeError> + Send + 'static,
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|e| MergeError::Failed(format!("git blocking task failed: {e}")))?
+}
+
 impl MergeService {
     /// 默认配置（测试命令 `cargo test`）。
     pub fn new(db: Database) -> Self {
@@ -333,7 +349,7 @@ impl MergeService {
         // 4. 执行真 merge：完成信号 = 集成分支上该票的 merge commit。
         record.mark_validated(&crate::now_rfc3339());
         self.store.save(&record)?;
-        let merge_commit = self.execute(&mapping, proposal)?;
+        let merge_commit = self.execute_in_background(&mapping, proposal).await?;
         record.mark_merged(&merge_commit, &crate::now_rfc3339());
 
         // 5. 投影（由 workflow 开关闸门；失败不影响完成信号）。
@@ -459,7 +475,7 @@ impl MergeService {
         let at = crate::now_rfc3339();
         record.mark_validated(&at);
         self.store.save(&record)?;
-        let merge_commit = self.execute(&mapping, &proposal)?;
+        let merge_commit = self.execute_in_background(&mapping, &proposal).await?;
         record.mark_merged(&merge_commit, &crate::now_rfc3339());
         let outcomes =
             projection::run(host, &mapping.repo_path, &mapping.ticket_id, &merge_commit);
@@ -609,7 +625,13 @@ impl MergeService {
         let worktree = Path::new(&mapping.worktree_path);
 
         // 票分支必须真实存在。
-        let branch_tip = match git::rev_parse(repo, &mapping.worktree_branch)? {
+        let branch_tip = match git_blocking({
+            let repo = repo.to_path_buf();
+            let branch = mapping.worktree_branch.clone();
+            move || git::rev_parse(&repo, &branch)
+        })
+        .await?
+        {
             Some(tip) => tip,
             None => {
                 return Err(MergeError::rejection(
@@ -630,7 +652,13 @@ impl MergeService {
             .map(str::trim)
             .filter(|commit| !commit.is_empty())
         {
-            match git::rev_parse(repo, claimed)? {
+            match git_blocking({
+                let repo = repo.to_path_buf();
+                let claimed = claimed.to_string();
+                move || git::rev_parse(&repo, &claimed)
+            })
+            .await?
+            {
                 Some(sha) if sha == branch_tip => {}
                 _ => {
                     return Err(MergeError::rejection(
@@ -646,7 +674,11 @@ impl MergeService {
         }
 
         // 校验一：worktree 干净。
-        let dirty = git::dirty_entries(worktree)?;
+        let dirty = git_blocking({
+            let worktree = worktree.to_path_buf();
+            move || git::dirty_entries(&worktree)
+        })
+        .await?;
         if !dirty.is_empty() {
             return Err(MergeError::rejection(
                 proposal_id,
@@ -660,7 +692,14 @@ impl MergeService {
         }
 
         // 校验二：FF 可行（集成分支是票分支的祖先 = 未分叉）。
-        if git::rev_parse(repo, &mapping.integration_branch)?.is_none() {
+        if git_blocking({
+            let repo = repo.to_path_buf();
+            let branch = mapping.integration_branch.clone();
+            move || git::rev_parse(&repo, &branch)
+        })
+        .await?
+        .is_none()
+        {
             return Err(MergeError::rejection(
                 proposal_id,
                 RejectionStage::FastForward,
@@ -670,7 +709,14 @@ impl MergeService {
                 ),
             ));
         }
-        if !git::is_ancestor(repo, &mapping.integration_branch, &mapping.worktree_branch)? {
+        if !git_blocking({
+            let repo = repo.to_path_buf();
+            let integration = mapping.integration_branch.clone();
+            let ticket = mapping.worktree_branch.clone();
+            move || git::is_ancestor(&repo, &integration, &ticket)
+        })
+        .await?
+        {
             return Err(MergeError::rejection(
                 proposal_id,
                 RejectionStage::FastForward,
@@ -697,7 +743,12 @@ impl MergeService {
         command
             .args(&self.config.test_command[1..])
             .current_dir(worktree)
-            .stdin(std::process::Stdio::null());
+            .stdin(std::process::Stdio::null())
+            // code review P2-9：`tokio::time::timeout` 到点只是**丢掉** output future，
+            // 子进程不会跟着没——没有 `kill_on_drop` 时超时的 `cargo test`（连同它自己
+            // 拉起的测试进程）会留在机器上继续跑，甚至继续写 worktree。测试闸门超时
+            // 是拒收理由，被拒收的提议不该留下一个活的编译/测试进程。
+            .kill_on_drop(true);
         let started = Instant::now();
         let output = match tokio::time::timeout(self.config.test_timeout, command.output()).await {
             Ok(result) => result.map_err(|e| {
@@ -744,6 +795,20 @@ impl MergeService {
     // -----------------------------------------------------------------------
     // 执行
     // -----------------------------------------------------------------------
+
+    /// 在 blocking 池里执行真 merge（code review P2-10）：`execute` 里连着三句 git
+    /// 子进程（找集成分支的检出工作树、必要时检出、`merge --no-ff`），同步跑会占住
+    /// axum handler 的 worker。
+    async fn execute_in_background(
+        &self,
+        mapping: &MappingRow,
+        proposal: &MergeProposal,
+    ) -> Result<String, MergeError> {
+        let service = self.clone();
+        let mapping = mapping.clone();
+        let proposal = proposal.clone();
+        git_blocking(move || service.execute(&mapping, &proposal)).await
+    }
 
     /// 执行真 merge，回传 merge commit sha（完成信号）。
     ///

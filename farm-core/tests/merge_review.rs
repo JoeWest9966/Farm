@@ -135,7 +135,13 @@ fn event_count(state: &AppState, kind: EventKind) -> usize {
         .len()
 }
 
-fn approval_audited(state: &AppState) -> bool {
+/// 审批事件是否已双写进 Kron（`audited=1`）。
+///
+/// code review P1-3 之后审计写入在**后台任务**里落地（`AppState::publish` 不再等
+/// `ledger record` 子进程），所以先 `flush` 等后台结算，再读事件日志——断言的仍是
+/// 「审批事件真的进了 Kron」，只是不再假设它同步发生。
+async fn approval_audited(state: &AppState) -> bool {
+    state.audit.flush().await;
     state
         .event_history(&EventLogFilter { since: None, kind: Some(EventKind::Approval), ticket_id: None, limit: None })
         .expect("history")
@@ -208,7 +214,7 @@ async fn the_approval_decision_is_double_written_to_the_kron_ledger() {
     let _ = f.state.merge.approve(&f.state, &id, "reviewer-joe").await.expect("approve");
 
     // 审批事件双写进 Kron（fake ledger 收到 event=approval 记录 + audited=1）。
-    assert!(approval_audited(&f.state), "审批事件必须双写进 Kron（audited=1）");
+    assert!(approval_audited(&f.state).await, "审批事件必须双写进 Kron（audited=1）");
     assert!(ledger_has_approval(&f.ledger_log), "fake ledger 必须收到 event=approval 记录");
 
     // 决策本身在事件载荷里（事件日志 + WS；Kron 的 details 是闭集 schema，只记事件元数据）。
@@ -229,7 +235,7 @@ async fn rejecting_sends_a_closed_set_signal_back_to_the_agent_without_merging()
     assert!(record.merge_commit.is_none(), "拒绝不产生完成信号");
 
     // 拒绝的审批决策也双写进 Kron（event=approval 记录在案 + audited=1）。
-    assert!(approval_audited(&f.state), "拒绝的审批决策同样双写进 Kron");
+    assert!(approval_audited(&f.state).await, "拒绝的审批决策同样双写进 Kron");
     assert!(ledger_has_approval(&f.ledger_log), "fake ledger 必须收到 event=approval 记录");
     let payload = approval_event_payload(&f.state).expect("approval event");
     assert_eq!(payload["decision"], "rejected", "拒绝决策在事件载荷");
@@ -252,7 +258,7 @@ async fn approving_a_proposal_that_fails_the_mechanical_gates_is_still_rejected(
     assert_eq!(record.state, MergeProposalState::Rejected, "机械拒收照样标 rejected");
     assert!(record.merge_commit.is_none(), "无完成信号");
     // 审批决策仍入账（人批了，但机械否了）。
-    assert!(approval_audited(&f.state), "审批决策照常双写");
+    assert!(approval_audited(&f.state).await, "审批决策照常双写");
 }
 
 #[tokio::test]

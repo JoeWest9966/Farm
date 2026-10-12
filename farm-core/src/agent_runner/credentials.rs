@@ -29,12 +29,16 @@ use crate::error::CoreError;
 /// `EnvPolicy` 的判据与测试不关心是哪一种——故按能力抽象，不按类型抽象。
 pub trait EnvTarget {
     fn set_env(&mut self, key: &str, value: &str);
+    fn remove_env(&mut self, key: &str);
     fn clear_env(&mut self);
 }
 
 impl EnvTarget for StdCommand {
     fn set_env(&mut self, key: &str, value: &str) {
         self.env(key, value);
+    }
+    fn remove_env(&mut self, key: &str) {
+        self.env_remove(key);
     }
     fn clear_env(&mut self) {
         self.env_clear();
@@ -45,8 +49,32 @@ impl EnvTarget for tokio::process::Command {
     fn set_env(&mut self, key: &str, value: &str) {
         self.env(key, value);
     }
+    fn remove_env(&mut self, key: &str) {
+        self.env_remove(key);
+    }
     fn clear_env(&mut self) {
         self.env_clear();
+    }
+}
+
+/// 宿主自己的鉴权凭据 env：**绝不**随继承进任何 Farm 拉起的子进程。
+///
+/// #23 的独立管理 token 裁决（「宿主管理 API 用独立 token，与 op token 不是同一个」）
+/// 有一个前提：这两个值不能从宿主进程里被旁路复制。agent-runner 的 spawn 计划原本是
+/// `EnvPolicy::InheritPlus`（真 pi 需要 PATH/HOME/API key），于是 `FARM_TOKEN` /
+/// `FARM_ADMIN_TOKEN` 被整个 attempt 生命周期里的 pi 子进程照单全收——拿到 pi 子进程
+/// 执行权的人因此同时拿到了宿主操作面与管理面的钥匙。
+///
+/// 这两个键在 [`EnvPolicy::apply`] 里被**无条件扣下**（无论哪种策略、无论值来自宿主 env
+/// 还是来自 `extra`）：pi 子进程是 agent 的工作现场，不是宿主管理面的延伸。插件进程不受
+/// 此影响——插件是契约客户端，`FARM_TOKEN` 是它调用契约路由的合法凭据（见
+/// [`crate::plugin::process`] 的 env 装配）。
+pub const HOST_SECRET_ENV_KEYS: &[&str] = &["FARM_TOKEN", "FARM_ADMIN_TOKEN"];
+
+/// 把宿主自己的鉴权凭据从一条命令上扣下（`apply` 的收尾步骤）。
+fn scrub_host_secrets(command: &mut impl EnvTarget) {
+    for key in HOST_SECRET_ENV_KEYS {
+        command.remove_env(key);
     }
 }
 
@@ -78,6 +106,9 @@ impl EnvPolicy {
     ///
     /// 泛型在 [`EnvTarget`] 上：`tokio::process::Command`（宿主异步 spawn 用的）
     /// 与 `std::process::Command` 都能接。
+    ///
+    /// 收尾无条件扣下 [`HOST_SECRET_ENV_KEYS`]：宿主自己的 op/admin token 不随 env
+    /// 继承进 pi 子进程（#23 独立 token 裁决的前提；code review P1-1）。
     pub fn apply(&self, command: &mut impl EnvTarget) {
         match self {
             EnvPolicy::InheritPlus(extra) => {
@@ -92,26 +123,28 @@ impl EnvPolicy {
                 }
             }
         }
+        scrub_host_secrets(command);
     }
 
     /// 本策略最终会让子进程看到的变量清单（测试断言用）。
+    ///
+    /// 与 [`EnvPolicy::apply`] 同一条收尾：宿主自己的鉴权凭据不出现
+    /// 在这个清单里（断言面不许比实现面松）。
     pub fn effective_pairs(&self) -> Vec<(String, String)> {
-        match self {
+        let mut pairs = match self {
             EnvPolicy::InheritPlus(extra) => {
                 let mut pairs: Vec<(String, String)> = std::env::vars().collect();
                 for (key, value) in extra {
                     pairs.retain(|(existing, _)| existing != key);
                     pairs.push((key.clone(), value.clone()));
                 }
-                pairs.sort();
                 pairs
             }
-            EnvPolicy::Replace(extra) => {
-                let mut pairs = extra.clone();
-                pairs.sort();
-                pairs
-            }
-        }
+            EnvPolicy::Replace(extra) => extra.clone(),
+        };
+        pairs.retain(|(key, _)| !HOST_SECRET_ENV_KEYS.contains(&key.as_str()));
+        pairs.sort();
+        pairs
     }
 }
 
@@ -414,6 +447,47 @@ mod tests {
             pairs.iter().filter(|(key, _)| key == "FARM_TEST_SECRET").count(),
             1,
             "同名 key 只能有一份（后者覆盖前者）"
+        );
+    }
+
+    #[test]
+    fn the_hosts_own_tokens_never_reach_the_pi_child() {
+        // code review P1-1：`InheritPlus`（默认策略）下 `FARM_TOKEN` / `FARM_ADMIN_TOKEN`
+        // 必须被扣下。用 extra 注入同样的键来模拟「宿主 env 里有它」——断言面不依赖
+        // 测试进程自己的 env（并行单测里改 env 是数据竞争）。
+        let policy = EnvPolicy::default()
+            .with_extra("FARM_TOKEN", "op-token-must-not-leak")
+            .with_extra("FARM_ADMIN_TOKEN", "admin-token-must-not-leak")
+            .with_extra("FARM_TEST_SECRET", "s3cret");
+        let pairs = policy.effective_pairs();
+
+        for key in HOST_SECRET_ENV_KEYS {
+            assert!(
+                pairs.iter().all(|(existing, _)| existing != key),
+                "{key} 不得出现在 pi 子进程 env 里: {pairs:?}"
+            );
+        }
+        assert!(
+            pairs.iter().any(|(key, value)| key == "FARM_TEST_SECRET" && value == "s3cret"),
+            "只扣宿主凭据，别的 extra 照旧: {pairs:?}"
+        );
+        assert!(
+            pairs.iter().any(|(key, _)| key == "PATH"),
+            "真 pi 仍要 PATH: {pairs:?}"
+        );
+    }
+
+    #[test]
+    fn the_replace_policy_also_drops_a_host_token_injected_as_an_extra() {
+        // 最小环境策略也不许被借道：凭据 env 名由 warehouse 说了算，但宿主 token 不是凭据。
+        let policy = EnvPolicy::Replace(vec![
+            ("FARM_TOKEN".into(), "op-token-must-not-leak".into()),
+            ("FARM_TEST_SECRET".into(), "s3cret".into()),
+        ]);
+        assert_eq!(
+            policy.effective_pairs(),
+            vec![("FARM_TEST_SECRET".to_string(), "s3cret".to_string())],
+            "Replace 策略下 FARM_TOKEN 同样被扣下"
         );
     }
 

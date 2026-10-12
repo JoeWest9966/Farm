@@ -39,6 +39,9 @@ fn main() {
         "scenario": scenario,
         "pid": std::process::id(),
         "hostPid": std::env::var("FARM_PLUGIN_HOST_PID").ok(),
+        // stderr 接到哪儿了（code review P2-11：宿主给插件的是 `/dev/null`，
+        // 不是 inherit——多话的插件不该占宿主 stderr，也不该被 64KB 管道堵死）。
+        "stderr": std::fs::read_link("/proc/self/fd/2").ok().map(|p| p.display().to_string()),
         "atMs": 0,
     }));
 

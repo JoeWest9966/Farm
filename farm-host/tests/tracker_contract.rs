@@ -401,3 +401,44 @@ async fn an_idempotent_reclaim_is_not_projected_as_a_new_claim_event() {
         "幂等重claim 不是新事实，不得再投影一条"
     );
 }
+
+#[tokio::test]
+async fn an_acquired_claim_is_persisted_in_the_event_log_not_only_broadcast() {
+    // code review P2-4：claim 投影原先只发内存总线——晚到的订阅者、事件历史快照、
+    // 通知通道都看不见它。claim 是票据状态的一等事实，必须走持久化发布路径。
+    let mut state = common::state();
+    state.tracker = TrackerService::new(
+        state.db.clone(),
+        Arc::new(NativeAdapter::from_tickets(tickets())) as Arc<dyn TrackerAdapter>,
+    );
+    let mut receiver = state.events.subscribe();
+    let app = build_router(state.clone());
+
+    app.oneshot(post_json(
+        "/v1/tracker/claims",
+        &claim_body("13", "orchestrator-a"),
+    ))
+    .await
+    .expect("oneshot");
+
+    let on_bus = receiver
+        .try_recv()
+        .expect("claim 成功必须投影到事件总线");
+    assert_eq!(on_bus.kind, EventKind::ClaimAcquired);
+
+    let history = state
+        .event_history(&farm_core::EventLogFilter {
+            since: None,
+            kind: Some(EventKind::ClaimAcquired),
+            ticket_id: None,
+            limit: None,
+        })
+        .expect("history");
+    let persisted = history
+        .events
+        .iter()
+        .find(|event| event.ticket_id.as_deref() == Some("13"))
+        .unwrap_or_else(|| panic!("claim 事件必须落进事件日志：{:?}", history.events));
+    assert_eq!(persisted.id, on_bus.id, "同一个事件 id：先落库再广播");
+    assert_eq!(persisted.payload["assignee"], "orchestrator-a");
+}

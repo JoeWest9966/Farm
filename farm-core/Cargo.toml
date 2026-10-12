@@ -20,6 +20,9 @@ thiserror.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+# 只为「配置回退要留一声告警」的日志捕获测试（code review P2-12）而引入；
+# 版本已在 workspace 解析过，不新增锁定条目。
+tracing-subscriber.workspace = true
 
 # fake pi RPC 测试替身（ticket #16）：说文档化 1.0.2 wire protocol 的 JSONL 进程。
 # 集成测试经 `CARGO_BIN_EXE_fake-pi` 拿到它的绝对路径。
@@ -42,3 +45,10 @@ path = "src/bin/fake-ledger.rs"
 [[bin]]
 name = "fake-plugin"
 path = "src/bin/fake-plugin.rs"
+
+# 带**真 tokio runtime** 的插件替身（#19 的冻结覆盖缺口，code review P1-open）：
+# fake-plugin 是纯 std 的，真实插件（plugin-skeleton / http-notifier）都跑自己的
+# runtime；宿主经 `tokio::process` 拉起它们时在本沙箱会冻住，这一角要能被测到。
+[[bin]]
+name = "tokio-plugin"
+path = "src/bin/tokio-plugin.rs"

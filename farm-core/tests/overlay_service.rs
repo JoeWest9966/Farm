@@ -48,7 +48,7 @@ fn repo_with_baseline() -> tempfile::TempDir {
 fn load(state: &AppState, repo: &std::path::Path) {
     state
         .workflow
-        .load_repo("repo-a", repo)
+        .load_repo(&state, "repo-a", repo)
         .expect("baseline loads");
 }
 

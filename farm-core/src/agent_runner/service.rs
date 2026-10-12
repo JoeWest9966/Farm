@@ -779,6 +779,10 @@ impl AgentRunner {
             args.push("--session".to_string());
             args.push(recovery.session_id.clone());
         }
+        // 仍然 `InheritPlus`：真 pi 要 PATH / HOME / 各provider 的 API key。但
+        // [`crate::agent_runner::credentials::EnvPolicy::apply`] 收尾会扣下
+        // `HOST_SECRET_ENV_KEYS`（`FARM_TOKEN` / `FARM_ADMIN_TOKEN`）——宿主自己的
+        // 鉴权凭据绝不随继承进 pi 子进程（#23 独立 token 裁决的前提，code review P1-1）。
         let mut plan = PiSpawnPlan::new(self.config.program.clone(), args)
             .with_env_policy(EnvPolicy::InheritPlus(Vec::new()));
         if let Some(cwd) = &self.config.cwd {

@@ -81,7 +81,8 @@ impl TrackerService {
     ///
     /// - 抢到 → 返回持有后的归一化票；
     /// - 同一 assignee 重复 claim → 幂等，同样返回（不写新历史）；
-    /// - 已被他人持有 → [`TrackerError::Conflict`]（GLOSSARY：失败即已被他人抢走）。
+    /// - 已被他人持有 → [`TrackerError::Conflict`]（GLOSSARY：失败即已被他人抢走）；
+    /// - 票已经 `done` → [`TrackerError::AlreadyDone`]（code review P2-8：完成信号不可逆）。
     pub fn claim(&self, issue_id: &str, assignee: &str) -> Result<Issue, TrackerError> {
         self.claim_with_outcome(issue_id, assignee)
             .map(|(issue, _)| issue)
@@ -105,6 +106,9 @@ impl TrackerService {
             ClaimOutcome::HeldByOther { holder } => Err(TrackerError::Conflict {
                 issue_id: issue_id.to_string(),
                 holder,
+            }),
+            ClaimOutcome::AlreadyDone => Err(TrackerError::AlreadyDone {
+                issue_id: issue_id.to_string(),
             }),
             ClaimOutcome::UnknownIssue => Err(TrackerError::NotFound {
                 issue_id: issue_id.to_string(),

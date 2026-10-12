@@ -7,10 +7,20 @@
 //!
 //! ```text
 //! AppState::publish ──┬─► events 表（SQLite，面板唯一读源）
-//!                     └─► AuditSink ──► `ledger record` 子进程 ──► Kron 账本
+//!                     └─► AuditSink::post ──► 后台任务（有界：inflight 信号量封顶）
+//!                                                └─► `ledger record` 子进程 ──► Kron 账本
 //!                            （kind 不在审计闭集 / 写失败：到此为止，只告警）
 //! 启动：对账扫 audited=0 的关键事件批量补写（幂等）
 //! ```
+//!
+//! ## 为什么写入在后台（code review P1-3）
+//! `ledger record` 是阻塞调用（起子进程 + 两个抽水线程 + 10ms 粒度轮询 `try_wait`，
+//! 上界 [`DEFAULT_LEDGER_TIMEOUT`]）。它原先直接跑在 `AppState::publish`（同步 fn）里、
+//! 由 axum handler 调用：一个卡死的 ledger 就占死一个 tokio worker，N 个审计关键
+//! publish 并发即饿死运行时。现在 `post` 把信封交给后台任务就返回，子进程等待发生在
+//! runtime 之外；结算语义一字不改（成功置 `audited=1`，失败发 `needs_attention`
+//! 且不置位，`audited=0` 由启动对账补——ledger 幂等）。`flush` 供测试与管理面
+//! 等后台落地。
 //!
 //! ## 与兄弟仓库的边界（ADR-0004 决策 2）
 //! - Kron **不是** Farm 的持久化层；面板读账走低频 + `--agg` 侧车（读面同模块，
@@ -32,9 +42,12 @@ pub use ledger::{LedgerEnvelope, LedgerWriter, RecordResult};
 pub use schema::{KronActor, KronDetails, KronEventType, KronRecord};
 
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use rusqlite::OptionalExtension;
+use tokio::sync::Semaphore;
 
 use farm_sdk::events::{EventEnvelope, EventKind, NewEvent};
 
@@ -51,6 +64,13 @@ pub const RECORD_ARGS: &[&str] = &["record"];
 /// 单次 `ledger` 调用的硬超时：审计是旁路，绝不允许它把主流程挂住。
 pub const DEFAULT_LEDGER_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// 同时在飞的 `ledger record` 写入上限（code review P1-3）。
+///
+/// 每个在飞写入 = 一个 blocking 池线程 + 一个真实子进程；审计是旁路，并发度必须封顶，
+/// 否则一次审计风暴能把 blocking 池占满。排队中的写入不丢（`audited` 保持 0，
+/// 启动对账按幂等键补）。
+pub const DEFAULT_MAX_INFLIGHT_WRITES: usize = 4;
+
 /// 一次补账最多带多少笔（Kron `record` 收 NDJSON 流；分批只是让单次调用有界）。
 pub const DEFAULT_BATCH_SIZE: usize = 100;
 
@@ -66,6 +86,10 @@ pub struct AuditSink {
     actor_farm_accepted: bool,
     /// 单次补账的批量上限。
     batch_size: usize,
+    /// 在飞写入信号量（code review P1-3：旁路并发度封顶）。
+    inflight: Arc<Semaphore>,
+    /// 已交出但尚未结算的后台写入数（`flush` / 诊断的地基）。
+    pending: Arc<AtomicUsize>,
 }
 
 impl AuditSink {
@@ -75,6 +99,8 @@ impl AuditSink {
             writer: LedgerWriter::disabled(),
             actor_farm_accepted: false,
             batch_size: DEFAULT_BATCH_SIZE,
+            inflight: Arc::new(Semaphore::new(DEFAULT_MAX_INFLIGHT_WRITES)),
+            pending: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -86,6 +112,8 @@ impl AuditSink {
             writer: LedgerWriter::new(program),
             actor_farm_accepted: false,
             batch_size: DEFAULT_BATCH_SIZE,
+            inflight: Arc::new(Semaphore::new(DEFAULT_MAX_INFLIGHT_WRITES)),
+            pending: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -101,6 +129,8 @@ impl AuditSink {
             writer: LedgerWriter::new(std::path::PathBuf::from(program)),
             actor_farm_accepted,
             batch_size: DEFAULT_BATCH_SIZE,
+            inflight: Arc::new(Semaphore::new(DEFAULT_MAX_INFLIGHT_WRITES)),
+            pending: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -176,11 +206,100 @@ impl AuditSink {
             return AuditOutcome::Unposted { reason };
         }
 
-        let record = match schema::KronRecord::from_event(envelope) {
-            Some(record) => record,
-            None => return AuditOutcome::Skipped,
+        let Some(record) = schema::KronRecord::from_event(envelope) else {
+            return AuditOutcome::Skipped;
         };
-        let outcome = match self.writer.record(std::slice::from_ref(&record)) {
+
+        // code review P1-3：`LedgerWriter::record` 是**阻塞**的——起子进程 + 起两个抽水
+        // 线程 + 主线程以 10ms 为粒度轮询 `try_wait`，上界 `DEFAULT_LEDGER_TIMEOUT`（10s）。
+        // 它原先就跑在 `AppState::publish`（同步 fn）里、被 axum handler 直接调用：一个
+        // 卡死的 ledger 就占死一个 tokio worker，N 个审计关键 publish 并发即饿死运行时
+        // （ADR-0005 §3「Kron 写失败不阻塞主流程」——主流程被自己拖死也是阻塞）。
+        //
+        // 现在这一笔交给**后台任务**：`post` 立刻返回，子进程等待与账本落判都发生在
+        // runtime 之外（`spawn_blocking` 的 blocking 池），调用方线程马上去服务别的请求。
+        // 并发度由 inflight 信号量封顶（每个在飞写入 = 一个 blocking 线程 + 一个真实
+        // 子进程）；结算语义一字不改——成功置 `audited=1`，失败发 `needs_attention`
+        // 且不置位，`audited=0` 的事件由启动对账补（ledger 幂等）。
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            // 没有运行时（同步启动路径 / 纯 sync 测试）：就地记完。这里没有 tokio
+            // worker 可被占住，阻塞与否无关紧要——启动期对账（`reconcile`）同路径。
+            return self.settle(
+                state,
+                envelope,
+                self.writer.record(std::slice::from_ref(&record)),
+            );
+        };
+
+        let sink = self.clone();
+        let state = state.clone();
+        let envelope = envelope.clone();
+        let permit = Arc::clone(&self.inflight);
+        // 先计数再 spawn：`pending == 0` 才是「后台一笔都没有」的可靠判据（flush 用）。
+        self.pending.fetch_add(1, Ordering::SeqCst);
+        handle.spawn(async move {
+            // 在任务里等许可（而不是在 post 里 try_acquire）：旁路饱和时这笔账排队
+            // 等着，不被丢弃——audited 保持 0，启动对账照样能补。
+            let _permit = match permit.acquire_owned().await {
+                Ok(permit) => permit,
+                Err(_) => {
+                    // 信号量关了（句柄全丢）：没有后台写入会落地，计数要减回去。
+                    sink.pending.fetch_sub(1, Ordering::SeqCst);
+                    return;
+                }
+            };
+            let writer = sink.writer.clone();
+            let posted = tokio::task::spawn_blocking(move || {
+                writer.record(std::slice::from_ref(&record))
+            })
+            .await;
+            let posted = posted.unwrap_or_else(|join_error| {
+                Err(CoreError::Io(std::io::Error::other(format!(
+                    "ledger record blocking task failed: {join_error}"
+                ))))
+            });
+            sink.settle(&state, &envelope, posted);
+            sink.pending.fetch_sub(1, Ordering::SeqCst);
+        });
+        AuditOutcome::Queued
+    }
+
+    /// 等后台审计写入全部落地（测试与管理面诊断用；没有后台写入时立即返回）。
+    ///
+    /// `pending` 在 `post` 交出任务前自增、任务结算后自减，所以 `pending == 0` 即
+    /// 「一笔都不在飞」。上界取 ledger 硬超时 + 一点余量：卡死的 ledger 已经被自己的
+    /// 硬超时杀掉，这里不该比它更久。
+    pub async fn flush(&self) {
+        let deadline =
+            tokio::time::Instant::now() + DEFAULT_LEDGER_TIMEOUT + Duration::from_secs(5);
+        while self.pending.load(Ordering::SeqCst) > 0 {
+            if tokio::time::Instant::now() >= deadline {
+                tracing::warn!(
+                    pending = self.pending.load(Ordering::SeqCst),
+                    "audit sidecar did not drain within the flush window"
+                );
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+    }
+
+    /// 在飞的审计写入数（诊断/测试可读）。
+    pub fn pending(&self) -> usize {
+        self.pending.load(Ordering::SeqCst)
+    }
+
+    /// 结算一笔后台写入：成功置 `audited=1`，失败发 `needs_attention` 且不置位。
+    ///
+    /// 与原先同步路径的形状一字不改（code review P1-3 只改「在哪儿等子进程」，
+    /// 不改「等到之后怎么办」）。
+    fn settle(
+        &self,
+        state: &AppState,
+        envelope: &EventEnvelope,
+        posted: Result<RecordResult, CoreError>,
+    ) -> AuditOutcome {
+        let outcome = match posted {
             Ok(result) if result.ok => match mark_audited(&state.db, &envelope.id) {
                 Ok(()) => AuditOutcome::Posted {
                     duplicate: result.duplicates > 0,
@@ -286,6 +405,9 @@ pub enum AuditOutcome {
     Skipped,
     /// 跨仓前置未完成：只标记未入账（SQLite + `audited=0` + `host_meta` 留证）。
     Unposted { reason: String },
+    /// 已交后台写入（code review P1-3）：`post` 到此返回，`audited` 由后台任务置位；
+    /// 失败仍走 `needs_attention` 告警 + 启动对账补账，语义与此前一字不差。
+    Queued,
     /// 已入 Kron 账本（`duplicate` = 幂等键撞上，账本原样收下）。
     Posted { duplicate: bool },
     /// 入账失败：主流程继续，只发告警事件，`audited` 不置位。
@@ -423,6 +545,7 @@ mod tests {
         assert!(AuditOutcome::Posted { duplicate: true }.is_posted());
         assert!(!AuditOutcome::Skipped.is_posted());
         assert!(!AuditOutcome::Unposted { reason: "x".into() }.is_posted());
+        assert!(!AuditOutcome::Queued.is_posted(), "后台还没结算就不算入账");
         assert!(!AuditOutcome::Failed { reason: "x".into() }.is_posted());
     }
 }

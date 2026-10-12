@@ -84,7 +84,7 @@ fn a_host_restart_prompts_to_restore_the_baseline_for_every_repo_with_overlays()
         let state = state_on(&db_path);
         state
             .workflow
-            .load_repo("repo-a", repo.path())
+            .load_repo(&state, "repo-a", repo.path())
             .expect("load baseline");
         set(&state, OverlayKey::MaxConcurrency, serde_json::json!(1));
     }
@@ -133,7 +133,7 @@ fn a_host_restart_without_overlays_prompts_nothing() {
         let state = state_on(&db_path);
         state
             .workflow
-            .load_repo("repo-a", repo.path())
+            .load_repo(&state, "repo-a", repo.path())
             .expect("load baseline");
     }
     let restarted = state_on(&db_path);
@@ -163,7 +163,7 @@ fn an_overlay_never_writes_back_to_the_orchestrated_repo() {
     let state = state_on(&db_path);
     state
         .workflow
-        .load_repo("repo-a", repo.path())
+        .load_repo(&state, "repo-a", repo.path())
         .expect("load baseline");
     set(&state, OverlayKey::MaxConcurrency, serde_json::json!(1));
     set(&state, OverlayKey::DispatchLabels, serde_json::json!(["panel-only"]));

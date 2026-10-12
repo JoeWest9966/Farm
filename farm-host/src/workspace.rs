@@ -55,17 +55,26 @@ pub async fn establish_worktree(
 
     let repo_path_str = request.repo_path.clone();
     let spec_id_str = request.spec_id.clone();
-    let row = state
-        .workspace
-        .establish(&EstablishRequest {
-            spec_id: request.spec_id,
-            integration_branch: request.integration_branch,
-            ticket_id: request.ticket_id,
-            repo_path: std::path::PathBuf::from(&request.repo_path),
-            worktree_path: std::path::PathBuf::from(&request.worktree_path),
-            worktree_branch: request.worktree_branch,
-            start_point: request.start_point,
-        })
+    // `establish` 是同步 fn，里面连着 `git worktree add` 等子进程（code review P2-10）：
+    // 在 async handler 的 worker 线程上同步等会占死 worker。挪进 blocking 池，worker
+    // 回去服务别的请求。
+    let workspace = state.workspace.clone();
+    let establish = EstablishRequest {
+        spec_id: request.spec_id,
+        integration_branch: request.integration_branch,
+        ticket_id: request.ticket_id,
+        repo_path: std::path::PathBuf::from(&request.repo_path),
+        worktree_path: std::path::PathBuf::from(&request.worktree_path),
+        worktree_branch: request.worktree_branch,
+        start_point: request.start_point,
+    };
+    let row = tokio::task::spawn_blocking(move || workspace.establish(&establish))
+        .await
+        .map_err(|e| {
+            ApiError(farm_sdk::ContractError::internal(format!(
+                "workspace establish task failed: {e}"
+            )))
+        })?
         .map_err(|e| ApiError(e.to_contract_error()))?;
 
     // 装载该仓库的 workflow 配置（GLOSSARY「Workflow 配置」= 投影开关的源）。
@@ -77,8 +86,10 @@ pub async fn establish_worktree(
     // workflow 就保持「无生效配置」（投影全关的安全默认），不滥发 needs_attention。
     let repo_root = std::path::Path::new(&repo_path_str);
     if repo_root.join(".farm/workflow.json").exists() {
-        let _ = state.workflow.load_repo(&repo_path_str, repo_root);
-        let _ = state.workflow.load_repo(&spec_id_str, repo_root);
+        // 告警经持久化发布路径（code review P2-4）：事件历史 / WS 快照 / 通知通道
+        // 都看得见，不只活着的总线订阅者。
+        let _ = state.workflow.load_repo(&state, &repo_path_str, repo_root);
+        let _ = state.workflow.load_repo(&state, &spec_id_str, repo_root);
     }
 
     Ok(Json(WorktreeRef {

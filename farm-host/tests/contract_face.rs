@@ -432,3 +432,39 @@ async fn the_workspace_mappings_route_projects_the_persisted_mapping_view() {
     assert_eq!(wt.branch, "farm/t14");
     assert_eq!(wt.state, WorktreeState::Creating, "pending 投影为 Creating");
 }
+
+#[tokio::test]
+async fn every_route_the_contract_docs_call_live_is_mounted_by_the_host() {
+    // code review P2-5：`SKELETON_LIVE_ROUTES` 是文档与宿主之间的一份契约——它印在
+    // 生成的 README 里（「已通」 vs 「占位」）。这条测试逐条打过去，断言宿主不拿
+    // `not_implemented` 回答：清单漏一条，文档就骗人；宿主少一条，实现就骗人。
+    for route in farm_sdk::docs::SKELETON_LIVE_ROUTES {
+        // WS 流不走普通 HTTP 面（upgrade 才通）；它的「已通」由 event_stream_ws 证明。
+        if *route == "/v1/events/stream" {
+            continue;
+        }
+        let method = CONTRACT_ROUTES
+            .iter()
+            .find(|candidate| candidate.path == *route)
+            .unwrap_or_else(|| panic!("{route} 必须在 CONTRACT_ROUTES 里"))
+            .method
+            .parse::<Method>()
+            .expect("GET/POST");
+        let app = app();
+        // POST 面给一个合法形状的空体：要的是「这条路通了」，不是「这个请求成立」。
+        let response = if method == Method::POST {
+            app.oneshot(json_request(route, Some(OP_TOKEN), "{}"))
+                .await
+                .expect("oneshot")
+        } else {
+            app.oneshot(request(method, route, Some(OP_TOKEN)))
+                .await
+                .expect("oneshot")
+        };
+        assert_ne!(
+            response.status(),
+            StatusCode::NOT_IMPLEMENTED,
+            "{route} 在契约文档里印着「已通」，宿主却答 not_implemented"
+        );
+    }
+}

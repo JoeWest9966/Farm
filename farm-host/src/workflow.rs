@@ -82,7 +82,7 @@ mod tests {
         fs::write(repo.path().join(".farm/workflow.json"), VALID).unwrap();
         state
             .workflow
-            .load_repo("repo-a", repo.path())
+            .load_repo(&state, "repo-a", repo.path())
             .expect("load valid");
 
         let (status, parsed) = get_status(build_router(state), "repo-a").await;
