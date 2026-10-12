@@ -30,7 +30,9 @@ pub static DOCS_DIR: LazyLock<PathBuf> =
     LazyLock::new(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/contract"));
 
 /// 本票骨架里已经真正打通的契约路由（其余全部返回闭集 `not_implemented`）。
-pub const SKELETON_LIVE_ROUTES: &[&str] = &["/v1/events/stream"];
+///
+/// `/v1/events/stream`（#11 WS）、`/v1/workspace/mappings`（#14 workspace 映射视图）。
+pub const SKELETON_LIVE_ROUTES: &[&str] = &["/v1/events/stream", "/v1/workspace/mappings"];
 
 /// 渲染全部契约文档：`文件名 -> 内容`。
 pub fn render_all() -> std::collections::BTreeMap<&'static str, String> {
@@ -234,7 +236,11 @@ pub fn render_readme_md() -> String {
     md.push_str("| --- | --- | --- | --- | --- |\n");
     for route in CONTRACT_ROUTES {
         let status = if SKELETON_LIVE_ROUTES.contains(&route.path) {
-            "骨架已通（WS 验 token + 事件流）"
+            if route.path == "/v1/events/stream" {
+                "骨架已通（WS 验 token + 事件流）"
+            } else {
+                "骨架已通"
+            }
         } else {
             "占位：`not_implemented`"
         };
