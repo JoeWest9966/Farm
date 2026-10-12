@@ -1,0 +1,22 @@
+[package]
+name = "orchestrator-skeleton"
+description = "第一个契约客户端：连上宿主、完成 /handshake、收到合法闭集错误（不进 Farm workspace，CI 单独编译）。"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# 独立 workspace：examples/ 按 ADR-0003 不进 Farm workspace。
+[workspace]
+
+[[bin]]
+name = "orchestrator-skeleton"
+path = "src/main.rs"
+
+[dependencies]
+farm-sdk = { path = "../../farm-sdk" }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time", "sync"] }
+serde_json.workspace = true
+tokio-tungstenite.workspace = true
+futures-util.workspace = true

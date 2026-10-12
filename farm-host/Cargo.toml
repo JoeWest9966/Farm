@@ -1,0 +1,31 @@
+[package]
+name = "farm-host"
+description = "Farm 宿主（唯一 binary，ADR-0003）：axum 承载编排器契约 HTTP+WS、宿主管理 API 与 rust-embed 嵌入的面板。"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+build = "build.rs"
+
+[[bin]]
+name = "farm-host"
+path = "src/main.rs"
+
+[dependencies]
+farm-sdk = { path = "../farm-sdk" }
+farm-core = { path = "../farm-core" }
+axum.workspace = true
+tokio.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+rust-embed.workspace = true
+tokio-tungstenite.workspace = true
+futures-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
