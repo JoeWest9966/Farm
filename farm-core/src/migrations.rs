@@ -8,7 +8,8 @@
 //!
 //! 版本分配（集成分支上协调）：#11 = v1 host_meta；#12 workflow LKG = v2；
 //! #13 tracker 票快照/状态历史 = v3；#14 workspace 映射 = v4；#15 事件日志 = v5；
-//! #16 attempts = v6；#18 merge 提议 = v7。只准追加、不准改历史版本；合并时按版本升序重排。
+//! #16 attempts = v6；#18 merge 提议 = v7；#19 插件监督 = v8；#24 覆盖层 = v9；
+//! #21 通知通道配置 = v10。只准追加、不准改历史版本；合并时按版本升序重排。
 
 use rusqlite::Connection;
 
@@ -150,7 +151,8 @@ fn v5_event_log(conn: &Connection) -> rusqlite::Result<()> {
 /// v3 的 SQL 住 [`crate::tracker::migrations`]（按五服务分域）；v7 的 SQL 住
 /// [`crate::merge::migrations`]（#18 跟随同一先例）；v8 的 SQL 住
 /// [`crate::plugin::migrations`]（#19）；v9 的 SQL 住
-/// [`crate::overlay::migrations`]（#24 覆盖层）；v2/v4/v5 为早期内联，保留原样。
+/// [`crate::overlay::migrations`]（#24 覆盖层）；v10 的 SQL 住
+/// [`crate::notifier::migrations`]（#21 通知通道配置）；v2/v4/v5 为早期内联，保留原样。
 pub const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 1,
@@ -196,5 +198,10 @@ pub const MIGRATIONS: &[Migration] = &[
         version: 9,
         name: "workflow_overlay",
         up: crate::overlay::migrations::v9_workflow_overlay,
+    },
+    Migration {
+        version: 10,
+        name: "notifier_channel_config",
+        up: crate::notifier::migrations::v10_notifier_channel_config,
     },
 ];

@@ -20,6 +20,7 @@ use crate::events::EventBus;
 use crate::merge::MergeService;
 use crate::migrations::{Migrator, MIGRATIONS};
 use crate::overlay::OverlayService;
+use crate::notifier::NotifierService;
 use crate::plugin::PluginHost;
 use crate::tracker::{NativeAdapter, TrackerService};
 use crate::workflow::WorkflowService;
@@ -82,6 +83,12 @@ pub struct AppState {
     /// 易失（ADR-0005 §2：运行瞬态不落库）；与 [`crate::control::TickControl`] 同形不同对象
     /// （那个停编排 tick、这个停宿主自身服务）。切换时发 `needs_attention` 供编排器/面板观测。
     pub service_control: ServiceControl,
+    /// 通知通道配置句柄（#21，加法追加）：per-仓库的 enabled + 过滤集（migration v10）。
+    ///
+    /// GLOSSARY「通知通道」：宿主侧可插拔外发出口的**配置持久面**，经宿主管理 API
+    /// （`/admin/notifier/channel/{repo_id}`）可改、重启后生效。**宿主零推送域知识**：
+    /// 这里只有「开不开 + 转哪些关键事件」，url/模板/重试/限流全住插件侧（自决载体）。
+    pub notifier: NotifierService,
 }
 
 impl AppState {
@@ -124,6 +131,7 @@ impl AppState {
             overlay: OverlayService::new(db.clone()),
             control: TickControl::new(),
             service_control: ServiceControl::new(),
+            notifier: NotifierService::new(db.clone()),
             audit,
             plugin: PluginHost::new(&db),
             db,

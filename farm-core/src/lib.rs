@@ -16,6 +16,7 @@ pub mod event_log;
 pub mod events;
 pub mod merge;
 pub mod migrations;
+pub mod notifier;
 pub mod overlay;
 pub mod plugin;
 pub mod recovery;
@@ -34,6 +35,7 @@ pub use error::CoreError;
 pub use event_log::{EventLog, EventLogFilter};
 pub use migrations::{Migration, Migrator, MIGRATIONS};
 pub use overlay::{OverlayStore, StoredOverlay};
+pub use notifier::{NotifierService, NotifierStore, StoredNotifierConfig};
 pub use merge::{
     MergeConfig, MergeError, MergeProposalRecord, MergeReport, MergeService, ProjectionOutcome,
     ProjectionStatus, ProjectionSwitch, RejectionStage,
