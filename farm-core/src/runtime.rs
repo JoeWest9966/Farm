@@ -17,6 +17,9 @@
 //! fake-nw 的数据（`FAKE_NW_KEYS`）与 fake-pi 的日志（`FAKE_PI_LOG`）/场景（`FAKE_PI_SCENARIO`）
 //! 都**不经这里**：它们由宿主 env 被 pi / nw 子进程**继承**（`EnvPolicy::InheritPlus` +
 //! `WarehouseCourier` 的 `StdCommand` 默认继承父 env），凭据值仍只在 spawn 窗口内存里活。
+//! 宿主自己的两个鉴权 token（`FARM_TOKEN` / `FARM_ADMIN_TOKEN`）是例外：`EnvPolicy::apply`
+//! 收尾无条件扣下它们（code review P1-1）——继承面收窄到「真 pi 需要的环境」，不收窄到
+//! 「宿主管理面的钥匙」。
 
 use std::path::PathBuf;
 use std::sync::Arc;

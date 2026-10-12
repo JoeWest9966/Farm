@@ -393,3 +393,57 @@ async fn credentials_reach_the_pi_child_but_never_a_plugin_process_environment()
         "宿主 env 绝不持有凭据（凭据只单向注入 pi 子进程）→ 插件进程环境无凭据"
     );
 }
+
+// ---------------------------------------------------------------------------
+// code review P1-1：宿主自己的 op/admin token 绝不进 pi 子进程 env
+// ---------------------------------------------------------------------------
+
+/// 宿主操作 token / 管理 token 的探针值（#23 的两个独立凭据）。
+const HOST_OP_TOKEN: &str = "host-op-token-p1-1-must-not-leak";
+const HOST_ADMIN_TOKEN: &str = "host-admin-token-p1-1-must-not-leak";
+
+#[tokio::test]
+async fn the_host_tokens_never_reach_the_pi_child_environment() {
+    // spawn 计划是 `EnvPolicy::InheritPlus`（真 pi 要 PATH/HOME），所以宿主进程 env 里的
+    // 两个 token 默认会被 pi 子进程整个 attempt 生命周期照单全收。这里把两个 token 放进
+    // **测试进程自己的 env**（= 宿主 env 的位置），派发一次 attempt，再断言 fake pi 的
+    // spawn 日志里没有它们。
+    //
+    // 只有本文件会跑这些 set_var，且本文件没有别的测试读这两个键（Harness 直接构造
+    // HostConfig，不走 from_env）——并行单测之间没有观测冲突。
+    std::env::set_var("FARM_TOKEN", HOST_OP_TOKEN);
+    std::env::set_var("FARM_ADMIN_TOKEN", HOST_ADMIN_TOKEN);
+
+    let harness = Harness::normal();
+    let attempt_id = harness.dispatch("17").await;
+    let record = harness.wait_terminal(&attempt_id).await;
+    assert_eq!(record.state, AttemptState::Settled);
+
+    let child_env = harness.pi_child_env();
+    for (key, value) in [
+        ("FARM_TOKEN", HOST_OP_TOKEN),
+        ("FARM_ADMIN_TOKEN", HOST_ADMIN_TOKEN),
+    ] {
+        assert!(
+            child_env.iter().all(|(env_key, _)| env_key != key),
+            "{key} 绝不得出现在 pi 子进程 env 里（宿主鉴权凭据不外溢）: {child_env:?}"
+        );
+        assert!(
+            !child_env
+                .iter()
+                .any(|(_, env_value)| env_value == value),
+            "token 值连以别的键名都不该出现在 pi 子进程 env 里: {child_env:?}"
+        );
+    }
+
+    // #17 的凭据注入不受影响：凭据 env 仍在该在的地方。
+    assert!(
+        child_env
+            .iter()
+            .any(|(k, v)| k == CRED_ENV && v == CRED_VALUE),
+        "扣下宿主 token 不该顺手把凭据 env 也扣了: {child_env:?}"
+    );
+
+    std::env::remove_var("FARM_TOKEN");
+    std::env::remove_var("FARM_ADMIN_TOKEN");
+}
