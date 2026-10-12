@@ -20,6 +20,7 @@ pub mod notifier;
 pub mod overlay;
 pub mod plugin;
 pub mod recovery;
+pub mod runtime;
 pub mod service_control;
 pub mod state;
 pub mod tracker;
@@ -49,6 +50,7 @@ pub use workspace::{
     EstablishRequest, MappingRow, MappingStatus, ReconcileReport, WorkspaceError, WorkspaceService,
 };
 pub use workflow::WorkflowService;
+pub use runtime::RuntimeOverrides;
 
 /// 当前 UTC 时间的 RFC3339 文本（事件时间戳 / migration applied_at）。
 ///

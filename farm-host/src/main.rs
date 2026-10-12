@@ -19,6 +19,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let state = AppState::new(config)?;
+    // 运行时覆写（ticket #26 加法接通）：把 agent-runner / merge 闸门 / tracker 票源换成
+    // 受控配置（fake-pi / fake-nw / 快测试命令 / 原生票 JSON），让**真实宿主进程**能跑
+    // 端到端 tracer 与一致性套件。无对应环境变量时 `apply` 原样返回（默认行为一字不变）。
+    // 必须早于下面的对账/恢复：恢复读 agent-runner，覆写可能换掉它。
+    let state = farm_core::RuntimeOverrides::from_env().apply(state)?;
     // 启动对账（ADR-0005 §9）：发现映射在而 worktree 目录缺/损时重建或标 broken。
     // 非致命——单票重建失败只标 broken，交由 merge 服务拒收，不阻塞宿主启动。
     match state.workspace.reconcile() {
