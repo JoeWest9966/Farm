@@ -38,8 +38,8 @@
 | agent-runner | POST | `/v1/agent-runner/attempts/{attempt_id}/abort` | 中止 attempt（abort 探针） | 占位：`not_implemented` |
 | merge | POST | `/v1/merge/proposals` | agent 提议 merge（宿主校验后执行） | 占位：`not_implemented` |
 | workspace | GET | `/v1/workspace/mappings` | spec ↔ 集成分支 ↔ worktrees 映射 | 占位：`not_implemented` |
-| events | GET | `/v1/events/stream` | WS 单连接订阅事件总线（握手同样验 token） | 骨架已通（WS 验 token + 事件流） |
-| events | GET | `/v1/events/history` | 事件历史查询（有界保留窗口） | 占位：`not_implemented` |
+| events | GET | `/v1/events/stream` | WS 单连接订阅事件总线（握手同样验 token） | 已通：事件总线投影面（WS 增量 + 历史快照） |
+| events | GET | `/v1/events/history` | 事件历史查询（有界保留窗口） | 已通：事件总线投影面（WS 增量 + 历史快照） |
 
 ## 宿主管理 API（host admin API，接口位）
 

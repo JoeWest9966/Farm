@@ -29,8 +29,10 @@ use crate::services::workspace::{MappingListResponse, WorktreeRef, WorktreeState
 pub static DOCS_DIR: LazyLock<PathBuf> =
     LazyLock::new(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/contract"));
 
-/// 本票骨架里已经真正打通的契约路由（其余全部返回闭集 `not_implemented`）。
-pub const SKELETON_LIVE_ROUTES: &[&str] = &["/v1/events/stream"];
+/// 宿主已经真正打通的契约路由（其余全部返回闭集 `not_implemented`）。
+///
+/// ticket #15 起事件总线的两条投影路由都在此：WS 单连接增量 + 历史快照 API。
+pub const SKELETON_LIVE_ROUTES: &[&str] = &["/v1/events/stream", "/v1/events/history"];
 
 /// 渲染全部契约文档：`文件名 -> 内容`。
 pub fn render_all() -> std::collections::BTreeMap<&'static str, String> {
@@ -234,7 +236,7 @@ pub fn render_readme_md() -> String {
     md.push_str("| --- | --- | --- | --- | --- |\n");
     for route in CONTRACT_ROUTES {
         let status = if SKELETON_LIVE_ROUTES.contains(&route.path) {
-            "骨架已通（WS 验 token + 事件流）"
+            "已通：事件总线投影面（WS 增量 + 历史快照）"
         } else {
             "占位：`not_implemented`"
         };

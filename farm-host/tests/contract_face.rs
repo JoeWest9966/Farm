@@ -6,7 +6,6 @@
 use axum::body::Body;
 use axum::http::{header, Method, Request, StatusCode};
 use axum::Router;
-use farm_host::build_router;
 use farm_sdk::{
     ClientInfo, ClientKind, ContractError, ErrorCode, HandshakeRequest, HandshakeResponse,
     CONTRACT_ROUTES, CONTRACT_VERSION, HANDSHAKE_PATH,
@@ -42,13 +41,6 @@ async fn body_json<T: serde::de::DeserializeOwned>(response: axum::http::Respons
         .await
         .expect("body bytes");
     serde_json::from_slice(&bytes).expect("json body")
-}
-
-async fn body_text(response: axum::http::Response<Body>) -> String {
-    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("body bytes");
-    String::from_utf8(bytes.to_vec()).expect("utf8 body")
 }
 
 fn handshake_request_body(contract_version: &str) -> String {
@@ -251,8 +243,10 @@ async fn an_empty_token_header_is_unauthorized() {
 #[tokio::test]
 async fn every_placeholder_contract_route_answers_not_implemented_with_the_op_token() {
     for route in CONTRACT_ROUTES {
-        if route.path == "/v1/events/stream" {
-            continue; // WS 路由在 tests/event_stream_ws.rs 单测
+        // 事件总线的两条投影路由已由 #15 打通，在各自的测试文件里断言：
+        // WS 在 tests/event_stream_ws.rs，历史快照在 tests/event_history.rs。
+        if route.path == "/v1/events/stream" || route.path == "/v1/events/history" {
+            continue;
         }
         let method: Method = route.method.parse().expect("GET/POST");
         let app = app();

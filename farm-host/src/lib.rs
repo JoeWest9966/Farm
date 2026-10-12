@@ -3,8 +3,8 @@
 //! axum 承载三个面：
 //!
 //! 1. **编排器契约面**：`POST /handshake` + `CONTRACT_ROUTES` 九条路由（其中
-//!    `GET /v1/events/stream` 是 WS）。除 WS 外全部返回闭集 `not_implemented`
-//!    ——服务域实现归 #13–#18。
+//!    `GET /v1/events/stream` 是 WS、`GET /v1/events/history` 是事件快照——ticket #15
+//!    的投影面）。其余全部返回闭集 `not_implemented`——服务域实现归 #13–#18。
 //! 2. **宿主管理 API**：`ADMIN_ROUTES` 两条，独立前缀 `/admin`；管理 token
 //!    校验机制是接口位，归 #23。
 //! 3. **面板伺服**：`build.rs` 把 `farm-panel` 编成 wasm 并嵌入，`/` 伺服。
@@ -19,6 +19,7 @@ pub mod admin;
 pub mod auth;
 pub mod contract;
 pub mod error;
+pub mod events;
 pub mod events_ws;
 pub mod panel;
 
@@ -32,8 +33,9 @@ use farm_sdk::HANDSHAKE_PATH;
 pub use error::ApiError;
 pub use panel::PanelAssets;
 
-/// 契约面上本票唯一真正打通的 route：WS 事件流（其余是占位）。
+/// 契约面上本票真正打通的 route：WS 事件流 + 事件历史快照（其余是占位）。
 const EVENTS_STREAM_PATH: &str = "/v1/events/stream";
+const EVENTS_HISTORY_PATH: &str = "/v1/events/history";
 
 /// 装配宿主路由：三个面 + 统一的闭集 404/405 兜底。
 ///
@@ -45,6 +47,8 @@ pub fn build_router(state: AppState) -> Router {
     for route in CONTRACT_ROUTES {
         let endpoint = if route.path == EVENTS_STREAM_PATH {
             get(events_ws::events_stream)
+        } else if route.path == EVENTS_HISTORY_PATH {
+            get(events::events_history)
         } else {
             match route.method {
                 "GET" => get(contract::not_implemented_placeholder),
