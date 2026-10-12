@@ -9,6 +9,7 @@
 use std::sync::Arc;
 
 use crate::agent_runner::AgentRunner;
+use crate::audit::AuditSink;
 use crate::config::HostConfig;
 use crate::db::Database;
 use crate::error::CoreError;
@@ -43,41 +44,54 @@ pub struct AppState {
     /// 测试经 [`AppState::with_agent_runner`] 换成 fake pi 替身；生产用默认
     /// （真 `pi` + 无凭据源，#17 之前的状态）。
     pub agent_runner: AgentRunner,
+    /// 审计双写旁路（#20，加法追加）：关键事件经 `ledger record` 子进程进 Kron 账本。
+    ///
+    /// **默认禁用**（`AuditSink::disabled()`）：宿主没配上 `ledger` 之前一个子进程都不起，
+    /// 所以 #15/#16 的发布路径行为一字不变。配上之后由 [`AppState::publish`] 顺带双写，
+    /// 失败只告警不阻塞（ADR-0005 §3）。
+    pub audit: AuditSink,
 }
 
 impl AppState {
     /// 宿主启动路径：打开私有存储、跑 migration runner（幂等）、建内存总线与事件日志。
+    ///
+    /// 审计旁路经 [`AuditSink::from_env`] 装配（`FARM_LEDGER` / `FARM_LEDGER_ACTOR_FARM`）。
     pub fn new(config: HostConfig) -> Result<Self, CoreError> {
+        Self::new_with_audit(config, AuditSink::from_env())
+    }
+
+    /// 同 [`AppState::new`]，但审计旁路显式注入（测试注入 fake `ledger` 替身）。
+    pub fn new_with_audit(config: HostConfig, audit: AuditSink) -> Result<Self, CoreError> {
         let db = Database::open(&config.db_path)?;
         db.migrate(&Migrator::new(MIGRATIONS))?;
-        let events = EventBus::new();
-        Ok(Self {
-            config: Arc::new(config),
-            tracker: default_tracker(&db),
-            workflow: WorkflowService::new(db.clone(), events.clone()),
-            workspace: WorkspaceService::new(db.clone()),
-            event_log: EventLog::new(),
-            agent_runner: default_agent_runner(&db),
-            db,
-            events,
-        })
+        Ok(Self::assemble(db, config, audit))
     }
 
     /// 用内存库构造（测试/一次性工具用；不落盘）。
+    ///
+    /// 内存库没有「上一次运行」：没有可恢复的 `running` attempt，也不补
+    /// `host_restarted`——崩溃恢复是**文件库宿主重启**路径，显式走
+    /// [`crate::recovery`]。审计旁路同样禁用（测试面不变量）。
     pub fn new_in_memory(config: HostConfig) -> Result<Self, CoreError> {
         let db = Database::open_in_memory()?;
         db.migrate(&Migrator::new(MIGRATIONS))?;
+        Ok(Self::assemble(db, config, AuditSink::disabled()))
+    }
+
+    /// 三个构造器共用的装配（不含启动副作用：恢复/对账由调用方显式触发）。
+    fn assemble(db: Database, config: HostConfig, audit: AuditSink) -> Self {
         let events = EventBus::new();
-        Ok(Self {
+        Self {
             config: Arc::new(config),
             tracker: default_tracker(&db),
             workflow: WorkflowService::new(db.clone(), events.clone()),
             workspace: WorkspaceService::new(db.clone()),
             event_log: EventLog::new(),
             agent_runner: default_agent_runner(&db),
+            audit,
             db,
             events,
-        })
+        }
     }
 
     /// 覆写 agent-runner 句柄（测试注入 fake pi 替身 / 生产换 program 与凭据源）。
@@ -85,6 +99,12 @@ impl AppState {
     /// 加法构造器：只换一个字段，别的服务句柄不动。
     pub fn with_agent_runner(mut self, agent_runner: AgentRunner) -> Self {
         self.agent_runner = agent_runner;
+        self
+    }
+
+    /// 覆写审计双写旁路（测试注入 fake `ledger` 替身 / 生产指向真 `ledger`）。
+    pub fn with_audit_sink(mut self, audit: AuditSink) -> Self {
+        self.audit = audit;
         self
     }
 
@@ -97,7 +117,23 @@ impl AppState {
     /// 落库失败即整条发布失败、**不上总线**：面板从未见过它，也就无所谓丢；
     /// 调用方（#16 agent-runner / #18 merge 服务）拿到 `Err` 自行重试或上报。
     /// 想要「纯活面广播」用 [`AppState::events`] 上的 `EventBus::publish`。
+    ///
+    /// ## 审计双写（#20）
+    /// 落库 + 广播之后顺带过一趟 [`AuditSink`]：审计闭集里的关键事件（派发、merge、
+    /// 审批、stall 判杀、host_restarted）经 `ledger record` 子进程补进 Kron 账本。
+    /// 这一步在发布路径**之外**：Kron 写失败只发 `needs_attention` 告警、`audited`
+    /// 不置位，主流程（返回值、总线、SQLite）不受任何影响（ADR-0005 §3）。
     pub fn publish(&self, new: NewEvent) -> Result<EventEnvelope, CoreError> {
+        let envelope = self.publish_without_audit(new)?;
+        self.audit.post(self, &envelope);
+        Ok(envelope)
+    }
+
+    /// 只走持久化发布路径（SQLite + 总线），**不过审计旁路**。
+    ///
+    /// 审计自己的告警事件（`needs_attention`）用它发：告警不在审计闭集里，
+    /// 走这条路也就不可能递归双写。
+    pub fn publish_without_audit(&self, new: NewEvent) -> Result<EventEnvelope, CoreError> {
         let envelope = self.events.stamp(new);
         self.db.with_conn_core(|conn| {
             self.event_log.append_conn(conn, &envelope)?;
@@ -134,6 +170,7 @@ impl std::fmt::Debug for AppState {
             .field("bind", &self.config.bind)
             .field("db", &self.db)
             .field("event_log", &self.event_log)
+            .field("audit_enabled", &self.audit.is_enabled())
             .finish_non_exhaustive()
     }
 }
