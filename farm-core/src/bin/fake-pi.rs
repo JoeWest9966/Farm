@@ -362,9 +362,9 @@ impl FakePi {
         self.emit(json!({"type": "agent_start"}));
 
         match self.scenario.as_str() {
-            "silence" | "abort-probe" => {
-                // 之后一个字都不吐（静默钟 / abort 探针）。
-            }
+            // 之后一个字都不吐：静默钟 / abort 探针 / 以及「活着但拒绝 steer」的场景
+            // （reject-steer 必须让 attempt 继续活着，宿主才注得进去）。
+            "silence" | "abort-probe" | "reject-steer" => {}
             "total-clock" => {
                 self.stream_next = Some(Instant::now());
             }

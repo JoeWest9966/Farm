@@ -61,6 +61,18 @@ impl PiSpawnPlan {
         self
     }
 
+    /// 环境策略（默认 `InheritPlus`：真 pi 需要 PATH/HOME/API key）。
+    pub fn with_env_policy(mut self, policy: EnvPolicy) -> Self {
+        self.env_policy = policy;
+        self
+    }
+
+    /// pi 子进程的 cwd（agent 的工作目录）。
+    pub fn with_cwd(mut self, cwd: impl Into<PathBuf>) -> Self {
+        self.cwd = Some(cwd.into());
+        self
+    }
+
     pub fn describe(&self) -> String {
         format!("{} {}", self.program, self.args.join(" "))
     }

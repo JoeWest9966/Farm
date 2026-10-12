@@ -20,12 +20,15 @@
 //! `accounting`（token 绝对累计）→ `ladder`（判据阶梯）→ `store`（attempts 持久化）→
 //! `service`（派发/steer/abort 与事件回流）→ `credentials`（凭据注入接缝，#17）。
 
+pub use service::{AgentRunner, RunnerConfig, RunnerError};
+
 pub mod accounting;
 pub mod credentials;
 pub mod ladder;
 pub mod migrations;
 pub mod process;
 pub mod rpc;
+pub mod service;
 pub mod store;
 
 /// fake pi RPC 测试替身的路径（测试与 #26 一致性套件共用）。

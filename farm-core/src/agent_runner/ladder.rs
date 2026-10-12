@@ -275,7 +275,11 @@ impl JudgementLadder {
                     .and_then(|r| r.as_str());
                 self.note_authoritative_message(role, stop_reason);
                 EventSignals {
-                    authoritative_usage: message.and_then(|m| m.get("usage")),
+                    message_end: Some(MessageUsage {
+                        id: message.and_then(|m| m.get("id")).and_then(|i| i.as_str()),
+                        role,
+                        usage: message.and_then(|m| m.get("usage")),
+                    }),
                     ..Default::default()
                 }
             }
@@ -289,7 +293,11 @@ impl JudgementLadder {
                             message.get("stopReason").and_then(|r| r.as_str());
                         self.note_authoritative_message(role, stop_reason);
                         if role != Some("system") {
-                            signals.agent_end_usage.push(message.get("usage"));
+                            signals.agent_end_messages.push(MessageUsage {
+                                id: message.get("id").and_then(|i| i.as_str()),
+                                role,
+                                usage: message.get("usage"),
+                            });
                         }
                     }
                 }
@@ -298,13 +306,16 @@ impl JudgementLadder {
             // message_update 的 usage 是**累积快照**：绝不入账（宁少报不虚报）。
             "message_update" => EventSignals::default(),
             // tool_execution_end.result.usage 可带 parentToolCallId：嵌套用量，必须进绝对累计。
+            // 注意 parentToolCallId 住在 **usage 对象里**（文档 §2：ToolResultMessage.usage），
+            // 事件顶层那份只是 tool_execution_start 的回显——两者都认，usage 里的优先。
             "tool_execution_end" => {
-                let result = event.get("result");
+                let usage = event.get("result").and_then(|r| r.get("usage"));
                 EventSignals {
-                    parent_tool_call_id: event
-                        .get("parentToolCallId")
+                    parent_tool_call_id: usage
+                        .and_then(|u| u.get("parentToolCallId"))
+                        .or_else(|| event.get("parentToolCallId"))
                         .and_then(|id| id.as_str()),
-                    nested_usage: result.and_then(|r| r.get("usage")),
+                    nested_usage: usage,
                     ..Default::default()
                 }
             }
@@ -318,24 +329,32 @@ impl JudgementLadder {
     }
 }
 
+/// 一条权威消息的记账输入（`id` 用于跨来源去重）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MessageUsage<'a> {
+    pub id: Option<&'a str>,
+    pub role: Option<&'a str>,
+    pub usage: Option<&'a Value>,
+}
+
 /// 一帧事件里抽出来的记账输入（`None` 字段 = 这一帧没有该来源）。
 #[derive(Default, Debug, Clone)]
 pub struct EventSignals<'a> {
-    /// `message_end.message.usage`（权威）。
-    pub authoritative_usage: Option<&'a Value>,
-    /// `agent_end.messages[].usage`（权威；system 消息已滤掉）。
-    pub agent_end_usage: Vec<Option<&'a Value>>,
-    /// `tool_execution_end` 的 `parentToolCallId`（嵌套用量标记）。
-    pub parent_tool_call_id: Option<&'a str>,
+    /// `message_end.message`（权威；`id` 供去重）。
+    pub message_end: Option<MessageUsage<'a>>,
+    /// `agent_end.messages[]`（权威；**system 消息已滤掉**）。
+    pub agent_end_messages: Vec<MessageUsage<'a>>,
     /// `tool_execution_end.result.usage` / `compaction_end.result.usage`（权威）。
     pub nested_usage: Option<&'a Value>,
+    /// `tool_execution_end` 的 `parentToolCallId`（嵌套用量标记）。
+    pub parent_tool_call_id: Option<&'a str>,
 }
 
 impl EventSignals<'_> {
     /// 这一帧是否带任何权威用量来源。
     pub fn has_usage(&self) -> bool {
-        self.authoritative_usage.is_some()
-            || !self.agent_end_usage.is_empty()
+        self.message_end.is_some()
+            || !self.agent_end_messages.is_empty()
             || self.nested_usage.is_some()
     }
 }
@@ -578,7 +597,8 @@ mod tests {
         let frame = message_end("stop");
         let signals = ladder.observe_event(&frame, Instant::now());
         assert!(signals.has_usage());
-        assert_eq!(signals.authoritative_usage.unwrap()["input"], 100);
+        assert_eq!(signals.message_end.expect("message_end").usage.expect("usage")["input"], 100);
+        assert_eq!(signals.message_end.expect("message_end").id, Some("msg-1"));
     }
 
     #[test]
@@ -592,23 +612,40 @@ mod tests {
             ],
         });
         let signals = ladder.observe_event(&event, Instant::now());
-        assert_eq!(signals.agent_end_usage.len(), 1, "system 消息的用量不得入账");
-        assert_eq!(signals.agent_end_usage[0].unwrap()["input"], 100);
+        assert_eq!(signals.agent_end_messages.len(), 1, "system 消息的用量不得入账");
+        assert_eq!(signals.agent_end_messages[0].usage.expect("usage")["input"], 100);
     }
 
     #[test]
     fn a_nested_tool_usage_frame_yields_its_parent_tool_call_id() {
         let mut ladder = ladder();
+        // 权威形状：parentToolCallId 住在 usage 对象里（ToolResultMessage.usage）。
         let event = json!({
             "type": "tool_execution_end",
             "toolCallId": "call-1",
-            "parentToolCallId": "call-parent-1",
-            "result": {"content": [], "usage": {"input": 40, "output": 5}},
+            "result": {
+                "content": [],
+                "usage": {"input": 40, "output": 5, "parentToolCallId": "call-parent-1"},
+            },
         });
         let signals = ladder.observe_event(&event, Instant::now());
         assert!(signals.has_usage());
         assert_eq!(signals.parent_tool_call_id, Some("call-parent-1"));
         assert_eq!(signals.nested_usage.unwrap()["input"], 40);
+    }
+
+    #[test]
+    fn a_parent_tool_call_id_on_the_event_envelope_is_also_accepted() {
+        let mut ladder = ladder();
+        // 有些版本把它放在事件顶层：认，但不因此漏记用量。
+        let event = json!({
+            "type": "tool_execution_end",
+            "toolCallId": "call-1",
+            "parentToolCallId": "call-parent-1",
+            "result": {"content": [], "usage": {"input": 40}},
+        });
+        let signals = ladder.observe_event(&event, Instant::now());
+        assert_eq!(signals.parent_tool_call_id, Some("call-parent-1"));
     }
 
     // --- next_wait -------------------------------------------------------

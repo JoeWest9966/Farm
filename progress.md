@@ -13,11 +13,11 @@ TDD 红→绿，竖切片，每片一次 checkpoint commit。
 | clear_queue 往返 | done（替身侧） | 宿主侧 API 待 service 片 |
 | env 只进 pi 子进程 | done（替身侧） | 宿主侧 `credentials::EnvPolicy` 待 credentials 片 |
 | process（spawn + 读循环） | done | `PiProcess::{spawn,send,close_stdin,kill,wait}` + `probe_version`/`round_trip`；读循环 = `read_until(b'\n')`；三段式收尾 |
-| 判据阶梯四梯 | doing | `ladder.rs` 判决内核（前置 + 两口钟 + 探针）已落地；fork 找回随 service 片 |
-| 完成双条件 | pending | `agent_settled` + 最后权威 assistant `stopReason==="stop"` |
-| token 流式记账 | pending | 绝对累计、宁少报不虚报、`parentToolCallId` 嵌套用量 |
-| disposition 回流 | pending | `prompt/steer/follow_up` 响应 disposition 进事件总线 |
-| settle 期注入推迟 | pending | fake pi 模拟 `_deferredSettledActions` |
+| 判据阶梯四梯 | done | 前置 = 帧数度量；两口钟 + abort 探针在 `run_ladder`；fork 找回归属 `supervise` 外层循环 |
+| 完成双条件 | done | `JudgementLadder::is_settled`：`agent_settled` 且最后权威 assistant `stopReason==="stop"` | `agent_settled` + 最后权威 assistant `stopReason==="stop"` |
+| token 流式记账 | done | `ladder::EventSignals` + `accounting::TokenAccounting` 接进读循环；settle 时 `get_session_stats` 对账 | 绝对累计、宁少报不虚报、`parentToolCallId` 嵌套用量 |
+| disposition 回流 | done | 监督循环收到 pi 响应时发 `Steer` 事件（channel/message/disposition/accepted）| `prompt/steer/follow_up` 响应 disposition 进事件总线 |
+| settle 期注入推迟 | done | `deferred` disposition 回流 + 替身 `_deferredSettledActions` 推迟执行有日志为证 | fake pi 模拟 `_deferredSettledActions` |
 | attempts 持久化（migration v6） | done | `agent_runner::migrations::v6_agent_runner_attempts` + `store::AttemptStore` | running/succeeded/failed/interrupted + token 快照 + accounting_truncated |
 | 宿主三条路由 | pending | /v1/agent-runner/{dispatches,steer,abort} |
 | 真 pi 冒烟 | pending | 记录版本偏差，不断言失败 |
@@ -73,6 +73,20 @@ TDD 红→绿，竖切片，每片一次 checkpoint commit。
   - 契约态 ↔ 持久态映射：`Settled→succeeded`、`Aborted→failed`（原因进 `note`）。
   - 测试：migrations 2 条 + store 7 条，全绿。
 
+- **slice 4（service + 判据阶梯驱动）** `feat(agent-runner): 监督循环——判据阶梯四梯 + 记账 + disposition 回流`
+  - `service.rs`：`AgentRunner` 句柄（挂在 AppState 上）+ 每 attempt 一个监督任务。
+    `dispatch/steer/follow_up/abort/clear_queue/attempt/attempts_for_ticket/recover_interrupted`。
+  - 事件回流一律走 `AppState::publish`（持久化路径：先落事件日志再广播）；句柄不反向持有
+    AppState（构造期循环），发布面由调用方以 `&AppState` 传入，监督任务持一份克隆。
+  - 判据阶梯四梯：读循环健康度前置（`frames_seen()==0` = 启动即坏，不进 fork）→ 静默钟
+    （发 abort）→ 总钟（强杀，不等回应）→ abort 探针（独立死线，强杀）→ fork 找回
+    （重 spawn `--session` + fork + 重发 prompt；**阶梯不重建**，总钟预算跨 fork 有效）。
+  - 收尾三段式：关 stdin → 宽限等待 → 强杀。settle 时 `get_session_stats` 权威对账。
+  - `RunnerError` 投影到契约闭集（not_found / conflict / service_unavailable / invalid_request）。
+  - 测试：`tests/agent_runner_dispatch.rs` 17 条端到端（真实 fake pi 子进程），全绿。
+  - 踩过的坑（记下来免得再犯）：`mpsc::UnboundedSender::send().is_err()` 与 `if !build(...)`
+    组合把成功当失败；`parentToolCallId` 住在 **usage 对象里**而非事件顶层。
+
 ## 剩余（remaining）
 
-service（process+ladder+accounting+disposition+fork）→ credentials 接线 → 宿主路由 → 真 pi 冒烟。
+宿主三条路由 → 真 pi 冒烟 → progress/验收。
