@@ -53,7 +53,12 @@ pub static DOCS_DIR: LazyLock<PathBuf> =
 
 /// 宿主已经真正打通的契约路由（其余全部返回闭集 `not_implemented`）。
 ///
-/// 随各服务票落地而增长：tracker 两条（#13）、workspace 映射（#14）、事件投影两条（#15）。
+/// 随各服务票落地而增长：tracker 三条（#13/#22）、workspace 两条（#14/#26）、事件投影
+/// 两条（#15）、agent-runner 五条（#16/#22）、merge 两条（#18 提议 / #25 审阅）。
+///
+/// 这份清单是**文档与宿主之间的一份契约**：`farm-host/tests/contract_face.rs` 有一条测试
+/// 逐条打过去，断言宿主不拿 `not_implemented` 回答（code review P2-5：清单漏了 merge 两条，
+/// 于是生成文档把它们印成占位，而一致性套件明明证成它们是活的）。
 pub const SKELETON_LIVE_ROUTES: &[&str] = &[
     "/v1/tracker/issues",
     "/v1/tracker/claims",
@@ -67,6 +72,8 @@ pub const SKELETON_LIVE_ROUTES: &[&str] = &[
     "/v1/agent-runner/attempts/{attempt_id}/abort",
     "/v1/agent-runner/attempts/{attempt_id}/follow-up",
     "/v1/agent-runner/attempts/{attempt_id}/clear-queue",
+    "/v1/merge/proposals",
+    "/v1/merge/reviews",
 ];
 
 /// 渲染全部契约文档：`文件名 -> 内容`。
@@ -333,6 +340,8 @@ pub fn render_readme_md() -> String {
                 "/v1/agent-runner/attempts/{attempt_id}/follow-up" => "已通：follow_up 注入（#22）",
                 "/v1/agent-runner/attempts/{attempt_id}/clear-queue" => "已通：clear_queue（#22）",
                 "/v1/tracker/releases" => "已通：release 交还排他所有权（#22）",
+                "/v1/merge/proposals" => "已通：agent 提议 merge（#18）",
+                "/v1/merge/reviews" => "已通：提议进人工审阅队列（#25）",
                 _ => "已通",
             }
         } else {

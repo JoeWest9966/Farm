@@ -39,8 +39,8 @@
 | agent-runner | POST | `/v1/agent-runner/attempts/{attempt_id}/abort` | 中止 attempt（abort 探针） | 已通：abort 探针（#16） |
 | agent-runner | POST | `/v1/agent-runner/attempts/{attempt_id}/follow-up` | follow_up：等 attempt 停下才送达的追加任务 | 已通：follow_up 注入（#22） |
 | agent-runner | POST | `/v1/agent-runner/attempts/{attempt_id}/clear-queue` | clear_queue：清掉 attempt 上排队的注入，回报清了几条 | 已通：clear_queue（#22） |
-| merge | POST | `/v1/merge/proposals` | agent 提议 merge（宿主校验后执行） | 占位：`not_implemented` |
-| merge | POST | `/v1/merge/reviews` | agent 提交 merge 提议进人工审阅队列（不自动执行；批准/拒绝走宿主管理 API，#25） | 占位：`not_implemented` |
+| merge | POST | `/v1/merge/proposals` | agent 提议 merge（宿主校验后执行） | 已通：agent 提议 merge（#18） |
+| merge | POST | `/v1/merge/reviews` | agent 提交 merge 提议进人工审阅队列（不自动执行；批准/拒绝走宿主管理 API，#25） | 已通：提议进人工审阅队列（#25） |
 | workspace | GET | `/v1/workspace/mappings` | spec ↔ 集成分支 ↔ worktrees 映射 | 已通：workspace 映射视图（#14） |
 | workspace | POST | `/v1/workspace/worktrees` | 建立 ticket worktree（write-ahead 映射 + git worktree add；#26 契约客户端整链接通） | 已通：契约客户端建 worktree（#26） |
 | events | GET | `/v1/events/stream` | WS 单连接订阅事件总线（握手同样验 token） | 已通：WS 单连接事件投影（#15） |
