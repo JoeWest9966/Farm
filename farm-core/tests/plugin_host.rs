@@ -530,3 +530,31 @@ async fn shutting_down_during_the_backoff_window_leaves_no_orphan_and_no_respawn
     assert_eq!(status.state, PluginState::Stopped, "退避中被停机：落 stopped");
     assert!(status.next_restart_at.is_none(), "不再排重启");
 }
+
+#[tokio::test]
+async fn the_host_gives_the_plugin_a_null_stderr_not_the_hosts_own() {
+    // code review P2-11：插件 stderr 原先 `inherit()`——插件直接写宿主的 stderr，
+    // 64KB 管道一写满，多话的插件就卡在自己的 stderr 上（表现为握手超时/「卡住」），
+    // 宿主的日志也被插件的噪音污染。插件自己的日志归插件自己管。
+    let (state, dir) = test_state();
+    let log = dir.join("fake-plugin.log");
+    std::fs::write(&log, "").expect("empty log");
+
+    state
+        .plugin
+        .launch(&state, &spec("normal", &log))
+        .await
+        .expect("handshake");
+
+    let start = log_events(&log)
+        .into_iter()
+        .find(|event| event.get("t").and_then(|t| t.as_str()) == Some("start"))
+        .expect("fake plugin must have logged a start line");
+    assert_eq!(
+        start["stderr"].as_str(),
+        Some("/dev/null"),
+        "插件的 stderr 必须是 /dev/null（与 agent-runner 的 pi 子进程同一纪律）: {start:?}"
+    );
+
+    state.plugin.shutdown_all().await;
+}

@@ -697,7 +697,12 @@ impl MergeService {
         command
             .args(&self.config.test_command[1..])
             .current_dir(worktree)
-            .stdin(std::process::Stdio::null());
+            .stdin(std::process::Stdio::null())
+            // code review P2-9：`tokio::time::timeout` 到点只是**丢掉** output future，
+            // 子进程不会跟着没——没有 `kill_on_drop` 时超时的 `cargo test`（连同它自己
+            // 拉起的测试进程）会留在机器上继续跑，甚至继续写 worktree。测试闸门超时
+            // 是拒收理由，被拒收的提议不该留下一个活的编译/测试进程。
+            .kill_on_drop(true);
         let started = Instant::now();
         let output = match tokio::time::timeout(self.config.test_timeout, command.output()).await {
             Ok(result) => result.map_err(|e| {

@@ -236,3 +236,124 @@ async fn a_stored_proposal_is_queryable_for_the_review_queue() {
     assert_eq!(for_ticket[0].proposal_id, report.proposal_id);
     assert_eq!(fx.state.merge.proposals().expect("all proposals").len(), 1);
 }
+
+// ---------------------------------------------------------------------------
+// code review P2-9：测试闸门超时必须把测试进程收掉，不是留它在机器上跑
+// ---------------------------------------------------------------------------
+
+/// 一个**永不结束**的测试命令：把自己的 pid 写进 worktree，然后空转（不起子进程，
+/// 所以「pid 死没死」能干净地判定 `kill_on_drop` 有没有生效）。
+fn write_hanging_test_script(dir: &Path) {
+    let path = dir.join("run-tests.sh");
+    std::fs::write(
+        &path,
+        "#!/bin/sh\necho $$ > hang.pid\ni=0\nwhile [ $i -lt 100000000 ]; do i=$((i+1)); done\n",
+    )
+    .expect("write hanging test script");
+    set_executable(&path);
+}
+
+/// 进程是否还活着（Linux `/proc`；测试专用探针）。
+///
+/// 僵尸（`Z`）算「已经死了，只差收尸」——`kill_on_drop` 发的是 SIGKILL，被杀的进程
+/// 在被 wait 之前一直是僵尸，`/proc/<pid>` 因此仍然存在。所以按 state 字段判，不按
+/// 目录存在判。
+fn pid_alive(pid: u32) -> bool {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
+    let Some(state) = stat.rsplit(')').next().and_then(|rest| rest.split_whitespace().next()) else {
+        return false; // /proc 项没了 = 进程没了
+    };
+    state != "Z"
+}
+
+/// 轮询等到进程死透（`timeout` 内没死透 → `false`）。
+fn wait_until_dead(pid: u32, timeout: Duration) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    while pid_alive(pid) {
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    true
+}
+
+#[tokio::test]
+async fn a_test_gate_timeout_kills_the_test_process_instead_of_leaking_it() {
+    let repo_dir = tempfile::tempdir().expect("tempdir");
+    git(repo_dir.path(), &["init", "--initial-branch=main"]);
+    git(repo_dir.path(), &["config", "user.email", "test@farm.local"]);
+    git(repo_dir.path(), &["config", "user.name", "Farm Test"]);
+    std::fs::write(repo_dir.path().join("README.md"), "scratch\n").expect("write readme");
+    write_hanging_test_script(repo_dir.path());
+    git(repo_dir.path(), &["add", "."]);
+    git(repo_dir.path(), &["commit", "-m", "init"]);
+    git(repo_dir.path(), &["branch", INTEGRATION]);
+
+    let wt_parent = tempfile::tempdir().expect("worktree parent");
+    let worktree = wt_parent.path().join("t18");
+
+    let mut state = AppState::new_in_memory(HostConfig {
+        bind: "127.0.0.1:3721".parse().expect("bind"),
+        op_token: "unit-op-token".into(),
+        admin_token: None,
+        db_path: std::env::temp_dir().join("farm-core-merge-unit-timeout.db"),
+    })
+    .expect("in-memory state");
+    // 闸门死线压到 300ms：足够让「超时即拒收」发生，又不拖慢测试。
+    let db = state.db.clone();
+    state = state.with_merge(MergeService::with_config(
+        db,
+        MergeConfig {
+            test_command: vec!["./run-tests.sh".into()],
+            test_timeout: Duration::from_millis(300),
+        },
+    ));
+    state
+        .workspace
+        .establish(&EstablishRequest {
+            spec_id: "spec-10".into(),
+            integration_branch: INTEGRATION.into(),
+            ticket_id: TICKET.into(),
+            repo_path: repo_dir.path().to_path_buf(),
+            worktree_path: worktree.clone(),
+            worktree_branch: BRANCH.into(),
+            start_point: Some(INTEGRATION.into()),
+        })
+        .expect("establish the ticket worktree");
+    std::fs::write(worktree.join("feature.txt"), "ticket 18 work\n").expect("write feature");
+    git(&worktree, &["add", "."]);
+    git(&worktree, &["commit", "-m", "feat: ticket 18 work"]);
+
+    let err = state
+        .merge
+        .propose(&state, &proposal(None, None))
+        .await
+        .expect_err("测试闸门超时必须是拒收理由");
+    assert!(
+        err.to_string().contains("did not finish within"),
+        "拒收理由要点名测试超时：{err}"
+    );
+    // 提议不得变成 merged（无完成信号）。
+    let stored = state
+        .merge
+        .proposals_for_ticket(TICKET)
+        .expect("proposals")
+        .into_iter()
+        .next()
+        .expect("the proposal is stored");
+    assert_eq!(stored.state, MergeProposalState::Rejected);
+    assert!(stored.merge_commit.is_none(), "超时不产生完成信号");
+
+    // 关键断言：超时的测试进程必须被收掉（`kill_on_drop`），不得留在机器上继续跑。
+    let pid_file = worktree.join("hang.pid");
+    let pid = std::fs::read_to_string(&pid_file)
+        .expect("the hanging test script must have recorded its pid")
+        .trim()
+        .parse::<u32>()
+        .expect("pid");
+    assert!(
+        wait_until_dead(pid, Duration::from_secs(2)),
+        "测试闸门超时后测试进程不得残留（kill_on_drop）：pid {pid} 还活着"
+    );
+}

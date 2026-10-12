@@ -178,11 +178,15 @@ impl PluginProcess {
         spec.validate()?;
         let mut command = Command::new(&spec.program);
         command.args(&spec.args);
-        // 宿主持有的 stdin + 读得着的 stdout；stderr 留给插件自己的日志。
+        // 宿主持有的 stdin + 读得着的 stdout；**stderr 丢进 null**（code review P2-11）：
+        // 原先 `inherit()` 让插件直接写宿主的 stderr，64KB 管道一写满，多话的插件就
+        // 卡在自己的 stderr 上（表现为插件「卡住」/握手超时），而宿主的日志也被插件
+        // 的噪音污染。插件自己的日志归插件自己管（写文件/自己的通道），宿主只收
+        // stdout 上那条 JSONL 契约面——与 agent-runner 的 `PiProcess` 同一纪律。
         command
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::null())
             .kill_on_drop(true);
         // 插件侧契约：告诉它自己是谁、父进程是谁（父死子陪葬）。
         command.env(PLUGIN_ID_ENV, &spec.plugin_id);
