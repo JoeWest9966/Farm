@@ -28,6 +28,7 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 getrandom = "0.3"
 time = { version = "0.3", features = ["formatting", "std"] }
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # --- farm-host ---
 axum = { version = "0.8", features = ["ws"] }
