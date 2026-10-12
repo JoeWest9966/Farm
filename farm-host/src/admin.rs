@@ -105,9 +105,16 @@ pub async fn status(State(state): State<AppState>) -> Json<AdminStatusResponse> 
     })
 }
 
-/// `GET /admin/plugins`：插件清单与状态（装卸能力占位，#19 落地）。
-pub async fn plugins() -> Json<AdminPluginListResponse> {
-    Json(AdminPluginListResponse { plugins: Vec::new() })
+/// `GET /admin/plugins`：插件清单与状态（#19 监督状态 → [`PluginSummary`] 投影）。
+///
+/// 读源是 [`farm_core::AppState::plugin`] 的 `PluginHost::statuses`（v8 `plugin_state` 表）；
+/// 存储故障 → 闭集 `service_unavailable`。
+pub async fn plugins(
+    State(state): State<AppState>,
+) -> Result<Json<AdminPluginListResponse>, ApiError> {
+    let statuses = state.plugin.statuses().map_err(ApiError::from)?;
+    let plugins = statuses.iter().map(|status| status.to_summary()).collect();
+    Ok(Json(AdminPluginListResponse { plugins }))
 }
 
 #[cfg(test)]
@@ -148,9 +155,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_admin_plugin_list_is_an_empty_placeholder() {
-        let Json(list) = plugins().await;
-        assert!(list.plugins.is_empty(), "插件装卸归 #19");
+    async fn the_admin_plugin_list_is_empty_when_nothing_is_supervised() {
+        let Json(list) = plugins(State(state())).await.expect("empty store reads ok");
+        assert!(list.plugins.is_empty());
     }
 
     #[test]

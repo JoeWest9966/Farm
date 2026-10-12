@@ -7,12 +7,14 @@
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode};
+use farm_core::plugin::{PluginState, PluginStatus};
 use farm_host::build_router;
+use farm_sdk::admin::AdminPluginListResponse;
 use farm_sdk::{ContractError, ErrorCode};
 use tower::ServiceExt;
 
 mod common;
-use common::{admin_app, ADMIN_TOKEN, OP_TOKEN};
+use common::{admin_app, admin_state, ADMIN_TOKEN, OP_TOKEN};
 
 /// 带（或不带）管理 token 的请求。
 fn admin_request(method: Method, uri: &str, token: Option<&str>) -> Request<Body> {
@@ -127,4 +129,73 @@ fn admin_state_without_admin_token() -> farm_core::AppState {
     let mut config = common::admin_config();
     config.admin_token = None;
     farm_core::AppState::new_in_memory(config).expect("in-memory state")
+}
+
+// ---------------------------------------------------------------------------
+// 插件装卸：GET /admin/plugins 投影监督状态（#19 plugin_state → PluginSummary）
+// ---------------------------------------------------------------------------
+
+/// 直接往宿主私有存储落一条插件状态（不经子进程，测投影 wiring）。
+fn seed_plugin(state: &farm_core::AppState, id: &str, name: &str, st: PluginState, restarts: u32) {
+    state
+        .plugin
+        .store()
+        .upsert(&PluginStatus {
+            plugin_id: id.into(),
+            name: name.into(),
+            program: format!("/usr/bin/{id}"),
+            state: st,
+            restarts,
+            pid: None,
+            last_error: None,
+            next_restart_at: None,
+            updated_at: "2025-01-01T00:00:00Z".into(),
+        })
+        .expect("seed plugin row");
+}
+
+async fn get_plugins(app: axum::Router) -> (StatusCode, AdminPluginListResponse) {
+    let response = app
+        .oneshot(admin_request(Method::GET, "/admin/plugins", Some(ADMIN_TOKEN)))
+        .await
+        .expect("oneshot");
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.expect("body");
+    (status, serde_json::from_slice(&bytes).expect("plugin list json"))
+}
+
+#[tokio::test]
+async fn the_admin_plugin_list_projects_the_supervised_plugin_states() {
+    // 宿主监督的插件（#19 plugin_state 表）经管理面投影成 PluginSummary，按 plugin_id 排序。
+    let state = admin_state();
+    seed_plugin(&state, "orch", "orchestrator", PluginState::Running, 0);
+    seed_plugin(&state, "notifier", "http notifier", PluginState::Quarantined, 4);
+
+    let (status, body) = get_plugins(build_router(state)).await;
+    assert_eq!(status, StatusCode::OK);
+    let plugins = body.plugins;
+    assert_eq!(plugins.len(), 2, "两个被监督插件都要投影出来");
+    assert_eq!(plugins[0].plugin_id, "notifier", "按 plugin_id 排序稳定");
+    assert_eq!(plugins[0].state, PluginState::Quarantined);
+    assert_eq!(plugins[0].restarts, 4, "隔离后的重试账面随投影带出");
+    assert_eq!(plugins[1].plugin_id, "orch");
+    assert_eq!(plugins[1].state, PluginState::Running);
+}
+
+#[tokio::test]
+async fn the_admin_plugin_list_is_empty_when_no_plugin_is_supervised() {
+    let (status, body) = get_plugins(admin_app()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.plugins.is_empty());
+}
+
+#[tokio::test]
+async fn the_admin_plugin_list_also_requires_the_admin_token() {
+    // 与其它管理面路由同一中间件：缺管理 token → unauthorized。
+    let app = admin_app();
+    let response = app
+        .oneshot(admin_request(Method::GET, "/admin/plugins", None))
+        .await
+        .expect("oneshot");
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
