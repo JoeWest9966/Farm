@@ -7,6 +7,7 @@
 //! 这里提供它们共同的底座。事件总线的持久面在 [`event_log`]（ticket #15）。
 
 pub mod agent_runner;
+pub mod audit;
 pub mod config;
 pub mod db;
 pub mod error;
@@ -14,11 +15,13 @@ pub mod event_log;
 pub mod events;
 pub mod merge;
 pub mod migrations;
+pub mod recovery;
 pub mod state;
 pub mod tracker;
 pub mod workspace;
 pub mod workflow;
 
+pub use audit::{AuditSink, AuditOutcome};
 pub use config::HostConfig;
 pub use db::{AppliedMigration, Database};
 pub use error::CoreError;
