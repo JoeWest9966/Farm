@@ -13,7 +13,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use farm_core::event_log::EventLogFilter;
-use farm_core::merge::{MergeConfig, MergeService};
+use farm_core::merge::{MergeConfig, MergeError, MergeService, RejectionStage};
 use farm_core::workspace::EstablishRequest;
 use farm_core::{AppState, HostConfig};
 use farm_sdk::events::{EventEnvelope, EventKind};
@@ -356,4 +356,73 @@ async fn a_test_gate_timeout_kills_the_test_process_instead_of_leaking_it() {
         wait_until_dead(pid, Duration::from_secs(2)),
         "测试闸门超时后测试进程不得残留（kill_on_drop）：pid {pid} 还活着"
     );
+}
+
+// ---------------------------------------------------------------------------
+// code review P2-6：CommitClaim 闸门的负向测试（「永不采信 agent 自述」）
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_self_reported_commit_that_is_not_the_branch_tip_is_rejected_at_the_commit_claim_gate() {
+    let fx = fixture(0);
+    let branch_tip = git(&fx.repo, &["rev-parse", BRANCH]);
+    // 一个真实存在但**不是**票分支顶点的 commit：初始提交（票分支的祖父）。
+    let wrong_but_real = git(&fx.repo, &["rev-parse", "HEAD"]);
+
+    // 自报一个分支上根本不存在的 sha：`rev-parse` 解不出来 → CommitClaim 拒收。
+    let err = fx
+        .state
+        .merge
+        .propose(&fx.state, &proposal(Some("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"), None))
+        .await
+        .expect_err("编造的 commit 必须被拒（永不采信自述）");
+    assert_stage(&err, RejectionStage::CommitClaim);
+
+    // 自报一个真实但不对的 sha：同样 CommitClaim——「是个 commit」不等于「是分支顶点」。
+    let err = fx
+        .state
+        .merge
+        .propose(&fx.state, &proposal(Some(&wrong_but_real), None))
+        .await
+        .expect_err("不是分支顶点的 commit 必须被拒");
+    assert_stage(&err, RejectionStage::CommitClaim);
+
+    // 两个都没产生完成信号：集成分支没动，提议行是 rejected。
+    assert_eq!(
+        git(&fx.repo, &["rev-parse", INTEGRATION]),
+        git(&fx.repo, &["rev-parse", "main"]),
+        "拒收不得动集成分支"
+    );
+    for stored in fx.state.merge.proposals_for_ticket(TICKET).expect("proposals") {
+        assert_eq!(stored.state, MergeProposalState::Rejected);
+        assert!(stored.merge_commit.is_none(), "无完成信号");
+    }
+    assert!(merge_events(&fx.state).is_empty(), "拒收不发 merge 事件");
+
+    // 正面：自报的正是分支顶点 → 同一道闸门放行（不是一律拒 self-report）。
+    let report = fx
+        .state
+        .merge
+        .propose(&fx.state, &proposal(Some(&branch_tip), None))
+        .await
+        .expect("自报顶点与分支顶点一致时必须放行");
+    assert_eq!(report.state, MergeProposalState::Merged);
+    let merge_commit = report.merge_commit.expect("merge commit sha");
+    // 真 merge commit：父2 正是自报并被核对过的那个票分支顶点。
+    assert_eq!(
+        git(&fx.repo, &["rev-parse", &format!("{merge_commit}^2")]),
+        branch_tip
+    );
+}
+
+/// 断言这是一次 `CommitClaim` 闸门的拒收（不是别的闸门，也不是宿主故障）。
+fn assert_stage(err: &MergeError, want: RejectionStage) {
+    match err {
+        MergeError::Rejected { stage, detail, .. } => {
+            assert_eq!(*stage, want, "拒收必须发生在 CommitClaim 闸门：{detail}");
+        }
+        other => panic!("必须是机械闸门拒收，收到 {other:?}"),
+    }
+    let contract = err.to_contract_error();
+    assert_eq!(contract.code, farm_sdk::ErrorCode::Conflict);
 }
