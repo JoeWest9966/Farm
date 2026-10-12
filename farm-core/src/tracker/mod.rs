@@ -20,10 +20,12 @@
 pub mod adapter;
 pub mod migrations;
 pub mod model;
+pub mod provider;
 pub mod service;
 pub mod store;
 
 pub use adapter::{NativeAdapter, NativeTicket, NativeTicketState, TrackerAdapter, NATIVE_PROVIDER};
+pub use provider::{current_provider, set_provider, KNOWN_PROVIDERS, TRACKER_PROVIDER_KEY};
 pub use farm_sdk::services::tracker::IssueState;
 pub use model::{parse_state, state_to_str, BlockingEdge, Issue, StateTransition};
 pub use service::{SyncReport, TrackerService};

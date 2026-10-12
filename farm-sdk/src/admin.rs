@@ -63,6 +63,28 @@ pub struct AdminPluginListResponse {
     pub plugins: Vec<PluginSummary>,
 }
 
+/// tracker provider / adapter 配置（宿主管理面视图，ticket #23）。
+///
+/// GLOSSARY「Tracker 服务」：provider 语义（GitHub/Gogs/native）关进 adapter，服务与契约不动。
+/// provider 名是 **host-private**（ADR-0005 §5）——它进宿主管理 API 的投影，**不进契约路由**。
+/// v1 唯一 adapter 是 `native`；换 provider = 加一个 `TrackerAdapter` 实现。
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TrackerProviderConfig {
+    /// 当前选中的 provider / adapter 名（未设置时默认 `native`）。
+    pub provider: String,
+    /// 可选 adapter 清单（面板据此渲染选择器；host-private）。
+    pub known_providers: Vec<String>,
+}
+
+/// 设置 tracker provider / adapter 的请求体（ticket #23）。
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TrackerProviderSelection {
+    /// 要切换到的 provider / adapter 名（未知名 → 闭集 `invalid_request`）。
+    pub provider: String,
+}
+
 /// 宿主管理 API 自描述（面板据此知道管理面在跑、契约版本是什么）。
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

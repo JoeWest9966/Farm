@@ -9,10 +9,10 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use axum::body::{Body, to_bytes};
-use axum::http::{Method, Request, StatusCode};
+use axum::http::{header, Method, Request, StatusCode};
 use farm_core::plugin::{PluginHost, PluginSpec, PluginState, PluginStatus, RetryPolicy};
 use farm_host::build_router;
-use farm_sdk::admin::{AdminPluginListResponse, PluginSummary};
+use farm_sdk::admin::{AdminPluginListResponse, PluginSummary, TrackerProviderConfig};
 use farm_sdk::{ContractError, ErrorCode};
 use tower::ServiceExt;
 
@@ -217,6 +217,17 @@ fn admin_post(uri: &str, token: &str) -> Request<Body> {
         .expect("request")
 }
 
+/// 带管理 token 的 JSON POST。
+fn admin_post_json(uri: &str, token: &str, body: &str) -> Request<Body> {
+    Request::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("x-farm-admin-token", token)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body.to_string()))
+        .expect("request")
+}
+
 /// fake-plugin 替身路径：cargo 把 bins 与测试二进制放进同一个 `<target>/<profile>/`
 /// （测试二进制在 `deps/` 子目录，bins 在上一级），故从 `current_exe` 上跳两层。
 fn fake_plugin_path() -> PathBuf {
@@ -305,4 +316,81 @@ async fn recover_relaunches_a_quarantined_plugin_through_the_admin_api() {
     assert_eq!(summary.restarts, 0, "恢复重置重试预算");
 
     state.plugin.shutdown_all().await;
+}
+
+// ---------------------------------------------------------------------------
+// tracker provider 配置（adapter 选择）：GET/POST /admin/tracker/provider
+// ---------------------------------------------------------------------------
+
+async fn get_provider(app: axum::Router) -> (StatusCode, TrackerProviderConfig) {
+    let response = app
+        .oneshot(admin_request(Method::GET, "/admin/tracker/provider", Some(ADMIN_TOKEN)))
+        .await
+        .expect("oneshot");
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.expect("body");
+    (status, serde_json::from_slice(&bytes).expect("provider config json"))
+}
+
+#[tokio::test]
+async fn the_tracker_provider_defaults_to_native() {
+    // v1 唯一 adapter 是 native；未配置时管理面报 native + 已知清单。
+    let (status, config) = get_provider(admin_app()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(config.provider, "native");
+    assert_eq!(config.known_providers, vec!["native".to_string()]);
+}
+
+#[tokio::test]
+async fn setting_a_known_tracker_provider_persists_across_requests() {
+    let app = admin_app();
+    let response = app
+        .clone()
+        .oneshot(admin_post_json(
+            "/admin/tracker/provider",
+            ADMIN_TOKEN,
+            r#"{"provider":"native"}"#,
+        ))
+        .await
+        .expect("oneshot");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // 同一宿主（同一 host_meta）再读：设置已持久。
+    let (status, config) = get_provider(app).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(config.provider, "native");
+}
+
+#[tokio::test]
+async fn setting_an_unknown_tracker_provider_is_invalid_request() {
+    // github adapter 在 v1 未实现：闭集 invalid_request（400），不是 500。
+    let app = admin_app();
+    let response = app
+        .oneshot(admin_post_json(
+            "/admin/tracker/provider",
+            ADMIN_TOKEN,
+            r#"{"provider":"github"}"#,
+        ))
+        .await
+        .expect("oneshot");
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(closed_set_error(response).await.code, ErrorCode::InvalidRequest);
+}
+
+#[tokio::test]
+async fn the_tracker_provider_route_is_guarded_by_the_admin_token() {
+    // op token 递到 tracker provider 管理路由 → forbidden（403）。
+    let app = admin_app();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/admin/tracker/provider")
+                .header("x-farm-token", OP_TOKEN)
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("oneshot");
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }

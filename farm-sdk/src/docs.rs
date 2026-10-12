@@ -10,7 +10,10 @@ use std::sync::LazyLock;
 
 use serde::Serialize;
 
-use crate::admin::{AdminPluginListResponse, AdminStatusResponse, PluginState, PluginSummary};
+use crate::admin::{
+    AdminPluginListResponse, AdminStatusResponse, PluginState, PluginSummary,
+    TrackerProviderConfig, TrackerProviderSelection,
+};
 use crate::control::{TickControlRequest, TickControlStatus, TickState};
 use crate::error::{ContractError, ErrorCode};
 use crate::events::{EventEnvelope, EventKind, NewEvent, WsHello};
@@ -122,6 +125,8 @@ fn named_type_schemas() -> Vec<(&'static str, serde_json::Value)> {
         ("PluginSummary", schema_value::<PluginSummary>()),
         ("AdminPluginListResponse", schema_value::<AdminPluginListResponse>()),
         ("AdminStatusResponse", schema_value::<AdminStatusResponse>()),
+        ("TrackerProviderConfig", schema_value::<TrackerProviderConfig>()),
+        ("TrackerProviderSelection", schema_value::<TrackerProviderSelection>()),
         ("WorkflowConfig", schema_value::<WorkflowConfig>()),
         ("RetryBackoff", schema_value::<RetryBackoff>()),
         ("ProjectionSwitches", schema_value::<ProjectionSwitches>()),

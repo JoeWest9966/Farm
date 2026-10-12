@@ -21,7 +21,10 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use farm_core::AppState;
-use farm_sdk::admin::{AdminPluginListResponse, AdminStatusResponse, PluginSummary};
+use farm_sdk::admin::{
+    AdminPluginListResponse, AdminStatusResponse, PluginSummary, TrackerProviderConfig,
+    TrackerProviderSelection,
+};
 use farm_sdk::{AuthScheme, ContractError, ServiceName, CONTRACT_VERSION, HOST_VERSION};
 
 use crate::error::ApiError;
@@ -128,6 +131,48 @@ pub async fn recover(
             )))
         })?;
     Ok(Json(status.to_summary()))
+}
+
+/// `GET /admin/tracker/provider`：查询当前 tracker provider / adapter 配置（adapter 选择）。
+///
+/// 读源是宿主私有 `host_meta` 的 `tracker.provider` 键（默认 `native`）；provider 名是
+/// host-private（ADR-0005 §5），只进管理面投影、不进契约。
+pub async fn tracker_provider(
+    State(state): State<AppState>,
+) -> Result<Json<TrackerProviderConfig>, ApiError> {
+    Ok(Json(current_tracker_config(&state)?))
+}
+
+/// `POST /admin/tracker/provider`：设置 tracker provider / adapter。
+///
+/// 未知名 provider → 闭集 `invalid_request`（400）——**在 HTTP 面校验**给出正确的闭集码
+/// （存储原语的 `CoreError::Config` 会落成 `internal`/500，对客户端错误是错的码）；
+/// 存储层仍自守其不变量（`tracker::set_provider` 也拒未知名，供直接调用方）。
+pub async fn set_tracker_provider(
+    State(state): State<AppState>,
+    Json(selection): Json<TrackerProviderSelection>,
+) -> Result<Json<TrackerProviderConfig>, ApiError> {
+    if !farm_core::tracker::KNOWN_PROVIDERS.contains(&selection.provider.as_str()) {
+        return Err(ApiError(ContractError::invalid_request(format!(
+            "unknown tracker provider {:?}; known providers: {:?}",
+            selection.provider, farm_core::tracker::KNOWN_PROVIDERS
+        ))));
+    }
+    farm_core::tracker::set_provider(&state.db, &selection.provider).map_err(ApiError::from)?;
+    Ok(Json(current_tracker_config(&state)?))
+}
+
+/// 当前 tracker provider 配置（GET 与 POST 共用：读 host_meta + 已知 adapter 清单）。
+fn current_tracker_config(state: &AppState) -> Result<TrackerProviderConfig, ApiError> {
+    let provider = farm_core::tracker::current_provider(&state.db).map_err(ApiError::from)?;
+    let known_providers = farm_core::tracker::KNOWN_PROVIDERS
+        .iter()
+        .map(|provider| provider.to_string())
+        .collect();
+    Ok(TrackerProviderConfig {
+        provider,
+        known_providers,
+    })
 }
 
 /// 插件宿主错误 → 契约闭集错误的投影。

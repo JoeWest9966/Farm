@@ -129,6 +129,16 @@ pub const ADMIN_ROUTES: &[AdminRouteSpec] = &[
     },
     AdminRouteSpec {
         method: "GET",
+        path: "/admin/tracker/provider",
+        summary: "查询当前 tracker provider / adapter 配置（adapter 选择，#23）",
+    },
+    AdminRouteSpec {
+        method: "POST",
+        path: "/admin/tracker/provider",
+        summary: "设置 tracker provider / adapter（adapter 选择，#23）",
+    },
+    AdminRouteSpec {
+        method: "GET",
         path: "/admin/workflow/config/{repo_id}",
         summary: "查询某被编排仓库当前生效的 workflow 配置与 LKG 状态（ticket #12）",
     },
