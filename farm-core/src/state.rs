@@ -198,6 +198,12 @@ impl AppState {
     /// 审批、stall 判杀、host_restarted）经 `ledger record` 子进程补进 Kron 账本。
     /// 这一步在发布路径**之外**：Kron 写失败只发 `needs_attention` 告警、`audited`
     /// 不置位，主流程（返回值、总线、SQLite）不受任何影响（ADR-0005 §3）。
+    ///
+    /// code review P1-3：`post` 只把信封**交给后台任务**就返回，`ledger record`
+    /// 的阻塞等待（起子进程 + 轮询退出，上界 10s）发生在 runtime 之外。原先它直接跑在
+    /// 本函数里、由 axum handler 调用：一个卡死的 ledger 就占死一个 tokio worker，
+    /// N 个审计关键 publish 并发即饿死运行时。要等后台结算用
+    /// [`crate::audit::AuditSink::flush`]。
     pub fn publish(&self, new: NewEvent) -> Result<EventEnvelope, CoreError> {
         let envelope = self.publish_without_audit(new)?;
         self.audit.post(self, &envelope);
