@@ -84,10 +84,39 @@ _避免_: code review（那是 agent 间行为）、PR 流程
 
 ## 通知通道 / Notification Channel
 
-关键事件（`blocked`、`needs_attention`、merge 完成、stall）的宿主侧外发出口，可插拔；具体载体（webhook/推送服务）另议。真 AFK 的人不在屏幕前，通知是 HITL 的前半程。
+关键事件（`blocked`、`needs_attention`、merge 完成、stall）的宿主侧外发出口，可插拔。真 AFK 的人不在屏幕前，通知是 HITL 的前半程。事件集闭包 = 上述四类关键事件保证进事件总线且可订阅；默认过滤集 = blocked / needs_attention / stall 开、merge 完成关（常态流量，票看板已是其投影）。
 _避免_: 推送（方向反了——是人被通知，不是面板推数据）
+
+## Notifier 插件 / Notifier Plugin
+
+通知通道的一等实现形态：进程级 IPC 插件，订阅事件总线、自决载体（URL/headers/body 模板、重试、限流）。宿主零推送域知识，推送格式全住插件侧。第一方只做一个通用 HTTP notifier（覆盖 ntfy/Bark/Discord/Slack 这类裸 POST 即达的服务）；Telegram 等专用格式插件留给第三方，不进 Farm 仓库。它消费事件、不驱动循环，与编排器类插件（契约客户端）是两类插件。
+_避免_: 内置转发器（已否决——为通知另开第二条扩展路径）、webhook 出口（那是某个具体插件的载体，不是通道本身）
 
 ## 捕俘 / Capture（SuctionCup 语境）
 
 把一台猎物服务器变成集群节点的全过程：连接 → 检测 → 装 Crossline 后门 → 灌载荷。SuctionCup 是 Farm 的独立插件（自己的 WIT/Wasm ABI），**不属于编排器契约**；它做的是 AFK 的前置，不碰 agent 生命周期。
 _避免_: 把吸盘当 agent-runner（它不驱动 agent）
+
+## 派内容物 / Pie Payload
+
+随派（profile）装配进 agent 运行环境的东西：skill、extension、pi 版本（recipe 的 runtime_pins）、Sentry 闸门等。Farm 宿主对派内容物只装配与消费其外发事件，不监督其内部。pi 运行时版本是派内容物，不是 Farm 的钉死项。
+
+_避免_: 插件（那是 Farm 宿主的进程级扩展，方向相反——派内容物住在 agent 侧）
+
+## 过路财神 / Credential Courier
+
+Farm 在凭据上的角色：spawn 前经 `nw key get` 取用、以 env 注入子进程、零缓存零落盘，凭据在 Farm 内存中的存活时间 = spawn 窗口。Farm 不是凭据保管人，Warehouse 才是。
+
+_避免_: 凭据代理（暗示可续存）、密钥管理器
+
+## 隔离 / Quarantined
+
+插件进程重试耗尽后的状态：宿主停止重启、发 `needs_attention`、面板可一键恢复。防崩溃风暴的硬边界。
+
+_避免_: 熔断（无自动恢复语义——恢复是人裁决）、死亡标记（quarantined 可恢复）
+
+## 判据阶梯 / Judgement Ladder
+
+agent-runner 本地后端对 pi 子进程的监督规格（源自 Slaveholder 六篇 ADR）：读循环健康度前置 → 两口钟（静默钟+总钟）→ abort 探针（30s 独立死线）→ fork 找回。完成判定 = `agent_settled` 且最后一条权威 assistant 消息 `stopReason === "stop"` 双条件。pi 子进程不是插件，不进插件重试策略。
+
+_避免_: 重试策略（那是插件监督的事）、超时（一个词装不下两口钟）
