@@ -65,10 +65,47 @@ fn v1_host_meta(conn: &Connection) -> rusqlite::Result<()> {
     )
 }
 
+/// Workspace 服务映射表（ticket #14，ADR-0005 §9）：spec ↔ 集成分支 ↔ worktree 映射。
+///
+/// write-ahead：`reserve` 先落一行 `status='pending'`（映射在、worktree 未必建），
+/// 建好 worktree 再转 `built`；启动对账发现目录缺/损则重建或标 `broken`。
+/// 一票一个 worktree，故 `ticket_id` 为主键；`worktree_branch` 全局唯一（加唯一索引）。
+/// schema 是宿主私有实现细节，永不外泄为契约（ADR-0005 §5）。
+fn v4_workspace_mapping(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS workspace_mapping (
+             ticket_id          TEXT PRIMARY KEY,
+             spec_id            TEXT NOT NULL,
+             integration_branch TEXT NOT NULL,
+             repo_path          TEXT NOT NULL,
+             worktree_path      TEXT NOT NULL,
+             worktree_branch    TEXT NOT NULL,
+             start_point        TEXT,
+             status             TEXT NOT NULL,
+             created_at         TEXT NOT NULL,
+             updated_at         TEXT NOT NULL
+         );
+         CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_mapping_branch
+             ON workspace_mapping(worktree_branch);
+         CREATE INDEX IF NOT EXISTS idx_workspace_mapping_status
+             ON workspace_mapping(status);",
+    )
+}
+
 /// 骨架 migration 集：只建 runner 自己的工作表与一张宿主级 key/value 表。
 /// 服务域表由 #13–#15 追加（加法演进，不改这里的历史版本）。
-pub const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "host_meta",
-    up: v1_host_meta,
-}];
+///
+/// 版本分配：#11 = v1；**#14 workspace 映射 = v4**（spec 指派）。兄弟票占 v2/v3/v5…；
+/// 合并到集成分支时按版本升序重排（`Migrator::validate` 强制严格升序）。
+pub const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "host_meta",
+        up: v1_host_meta,
+    },
+    Migration {
+        version: 4,
+        name: "workspace_mapping",
+        up: v4_workspace_mapping,
+    },
+];

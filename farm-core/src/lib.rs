@@ -12,12 +12,14 @@ pub mod error;
 pub mod events;
 pub mod migrations;
 pub mod state;
+pub mod workspace;
 
 pub use config::HostConfig;
 pub use db::{AppliedMigration, Database};
 pub use error::CoreError;
 pub use migrations::{Migration, Migrator, MIGRATIONS};
 pub use state::AppState;
+pub use workspace::{EstablishRequest, MappingRow, MappingStatus, ReconcileReport, WorkspaceError, WorkspaceService};
 
 /// 当前 UTC 时间的 RFC3339 文本（事件时间戳 / migration applied_at）。
 ///

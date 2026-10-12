@@ -19,6 +19,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let state = AppState::new(config)?;
+    // 启动对账（ADR-0005 §9）：发现映射在而 worktree 目录缺/损时重建或标 broken。
+    // 非致命——单票重建失败只标 broken，交由 merge 服务拒收，不阻塞宿主启动。
+    match state.workspace.reconcile() {
+        Ok(report) => {
+            if !report.rebuilt.is_empty() || !report.marked_broken.is_empty() {
+                tracing::info!(
+                    rebuilt = report.rebuilt.len(),
+                    marked_broken = report.marked_broken.len(),
+                    "workspace startup reconcile"
+                );
+            }
+        }
+        Err(e) => tracing::warn!(error = %e, "workspace startup reconcile failed (non-fatal)"),
+    }
     let router = build_router(state);
 
     let listener = tokio::net::TcpListener::bind(bind).await?;
