@@ -26,7 +26,7 @@ thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "net"] }
 rusqlite = { version = "0.37", features = ["bundled"] }
 getrandom = "0.3"
-time = { version = "0.3", features = ["formatting", "std"] }
+time = { version = "0.3", features = ["formatting", "parsing", "std"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 

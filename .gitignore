@@ -14,3 +14,6 @@ Thumbs.db
 
 # Local scratch that is not part of the plan
 .scratch/tmp/
+
+# Implementer scratch (PLAN: keep progress.md in the worktree, not in history)
+progress.md

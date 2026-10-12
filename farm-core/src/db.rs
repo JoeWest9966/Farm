@@ -85,6 +85,18 @@ impl Database {
         f(&guard).map_err(CoreError::Store)
     }
 
+    /// 在宿主私有存储上执行一段读/写逻辑，闭包里直接返回 [`CoreError`]。
+    ///
+    /// 事件日志（#15）这类「rusqlite 错误之上还有自己的闭合性校验」的服务用它：
+    /// 同一把锁内既写库又做后续动作，错误形状仍然是宿主统一的 [`CoreError`]。
+    pub fn with_conn_core<T>(
+        &self,
+        f: impl FnOnce(&Connection) -> Result<T, CoreError>,
+    ) -> Result<T, CoreError> {
+        let guard = self.lock()?;
+        f(&guard)
+    }
+
     /// 当前 journal mode（ADR-0005 §1 要求 WAL）。
     pub fn journal_mode(&self) -> Result<String, CoreError> {
         self.with_conn(|conn| conn.query_row("PRAGMA journal_mode", [], |r| r.get(0)))
