@@ -102,7 +102,7 @@ pub fn build_router(state: AppState) -> Router {
         auth::require_op_token,
     ));
 
-    // --- 宿主管理 API：前缀独立，管理 token 机制是接口位（#23）---
+    // --- 宿主管理 API：前缀独立，管理 token 校验机制（#23）---
     let mut admin = Router::new();
     for route in ADMIN_ROUTES {
         let endpoint = match (route.method, route.path) {
@@ -116,6 +116,13 @@ pub fn build_router(state: AppState) -> Router {
         };
         admin = admin.route(route.path, endpoint);
     }
+    // 管理 token 静态鉴权只盖管理面（#23）：独立凭据，与契约面的 op token 边界分明。
+    // `route_layer` 而非 `layer`：未挂载路径不过中间件；交叉访问在中间件里被判
+    // （op token → forbidden、缺/错管理 token → unauthorized，见 `admin::require_admin_token`）。
+    let admin = admin.route_layer(middleware::from_fn_with_state(
+        state.clone(),
+        admin::require_admin_token,
+    ));
 
     // --- 面板：嵌入资产，`/` 伺服，不带 op token ---
     let panel = panel::router();

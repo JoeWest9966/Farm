@@ -11,6 +11,10 @@ use axum::Router;
 /// 测试用 op token（静态单 token 鉴权的已知值）。
 pub const OP_TOKEN: &str = "test-op-token";
 
+/// 测试用管理 token（ticket #23）：宿主管理 API 的**独立**凭据，与 op token 不是同一个
+/// （spec 新增裁决：管理 token ≠ 操作 token；交叉访问被拒）。
+pub const ADMIN_TOKEN: &str = "test-admin-token";
+
 /// 测试用宿主配置：回环地址 + 已知 token + 内存库（不落盘）。
 pub fn config() -> HostConfig {
     HostConfig {
@@ -26,7 +30,27 @@ pub fn state() -> AppState {
     AppState::new_in_memory(config()).expect("in-memory state")
 }
 
+/// 管理面启用的测试配置：`admin_token = Some(ADMIN_TOKEN)`，与 op token 相异。
+pub fn admin_config() -> HostConfig {
+    HostConfig {
+        bind: "127.0.0.1:3721".parse().expect("valid bind"),
+        op_token: OP_TOKEN.into(),
+        admin_token: Some(ADMIN_TOKEN.into()),
+        db_path: std::env::temp_dir().join("farm-host-admin-tests.db"),
+    }
+}
+
+/// 管理面启用的测试状态（ticket #23 的 admin face 测试用）。
+pub fn admin_state() -> AppState {
+    AppState::new_in_memory(admin_config()).expect("in-memory state")
+}
+
 /// 装配好的真实 router（与 `main` 用的是同一个装配点）。
 pub fn app() -> Router {
     build_router(state())
+}
+
+/// 管理面启用的真实 router（admin token 校验机制已落地，#23）。
+pub fn admin_app() -> Router {
+    build_router(admin_state())
 }

@@ -44,11 +44,14 @@ mod tests {
       "projection": { "open_pr": true, "close_issue": true }
     }"#;
 
+    /// 管理 token（ticket #23）：`/admin/workflow/config` 现归管理面，需独立管理 token 鉴权。
+    const ADMIN_TOKEN: &str = "unit-admin-token";
+
     fn state() -> AppState {
         AppState::new_in_memory(HostConfig {
             bind: "127.0.0.1:3721".parse().expect("bind"),
             op_token: "unit-op-token".into(),
-            admin_token: None,
+            admin_token: Some(ADMIN_TOKEN.into()),
             db_path: std::env::temp_dir().join("farm-host-workflow-test.db"),
         })
         .expect("in-memory state")
@@ -59,6 +62,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri(format!("/admin/workflow/config/{repo_id}"))
+                    .header("x-farm-admin-token", ADMIN_TOKEN)
                     .body(axum::body::Body::empty())
                     .expect("request"),
             )
