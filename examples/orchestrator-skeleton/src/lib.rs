@@ -8,4 +8,4 @@
 
 pub mod client;
 
-pub use client::{run_contract_smoke, SmokeCheck};
+pub use client::{run_contract_smoke, ContractClient, SmokeCheck};
