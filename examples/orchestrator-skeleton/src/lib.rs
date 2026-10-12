@@ -7,5 +7,9 @@
 //! 只 depend `farm-sdk`（纯契约类型，零运行时）——与面板、插件同路。
 
 pub mod client;
+pub mod conformance;
+pub mod report;
 
 pub use client::{run_contract_smoke, ContractClient, SmokeCheck};
+pub use conformance::run_conformance;
+pub use report::{Check, Report};

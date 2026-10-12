@@ -314,28 +314,75 @@ impl ContractClient {
     // --- WS 事件面：连接、读首帧 hello（契约版本的活的证明）---
 
     /// 订阅 WS 事件流并读回首帧 `hello`（自描述契约版本 + 事件闭集）。
+    ///
+    /// 用最少机器：手写 WS upgrade（带 op token 头）+ 解析首个**服务端文本帧**
+    /// （服务端帧不带掩码）。hello 是订阅建立后宿主立即回的自描述。
     pub async fn ws_hello(&self) -> Result<farm_sdk::events::WsHello, String> {
-        use futures_util::StreamExt;
-        let url = format!("ws://{}/v1/events/stream", self.addr);
-        let request = http::Request::builder()
-            .uri(&url)
-            .header("X-Farm-Token", &self.op_token)
-            .body(())
-            .map_err(|e| format!("build ws request: {e}"))?;
-        let (mut ws, _resp) = tokio_tungstenite::connect_async(request)
-            .await
-            .map_err(|e| format!("ws upgrade failed: {e}"))?;
-        let first = ws.next().await.ok_or("ws closed before the hello frame")?.map_err(|e| format!("ws read: {e}"))?;
-        match first {
-            tokio_tungstenite::tungstenite::Message::Text(text) => {
-                serde_json::from_str(text.as_str()).map_err(|e| format!("hello frame is not a WsHello: {e}: {text}"))
+        use tokio::io::AsyncReadExt;
+        let mut stream = TcpStream::connect(self.addr).await.map_err(|e| format!("connect: {e}"))?;
+        let upgrade = format!(
+            "GET /v1/events/stream HTTP/1.1\r\nHost: {}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nX-Farm-Token: {}\r\n\r\n",
+            self.addr, self.op_token
+        );
+        stream.write_all(upgrade.as_bytes()).await.map_err(|e| format!("write upgrade: {e}"))?;
+        stream.flush().await.map_err(|e| format!("flush: {e}"))?;
+
+        // 读响应头（到空行为止）；确认 101（token 已在中间件验过，缺/错会先 401）。
+        let mut header = Vec::new();
+        let mut byte = [0u8; 1];
+        while !header.ends_with(b"\r\n\r\n") {
+            let n = stream.read(&mut byte).await.map_err(|e| format!("read header: {e}"))?;
+            if n == 0 {
+                return Err(format!("connection closed during ws upgrade: {}", String::from_utf8_lossy(&header)));
             }
-            other => Err(format!("expected a text hello frame, got {other:?}")),
+            header.extend_from_slice(&byte[..n]);
         }
+        let status_line = String::from_utf8_lossy(&header);
+        let status_line = status_line.lines().next().unwrap_or_default().to_string();
+        if !status_line.contains("101") {
+            return Err(format!("ws upgrade was not accepted: {status_line}"));
+        }
+
+        // 读首个服务端文本帧（不带掩码）：2 字节头 + 扩展长度 + payload。
+        let payload = read_ws_frame(&mut stream).await.map_err(|e| format!("read hello frame: {e}"))?;
+        serde_json::from_str(&payload).map_err(|e| format!("hello frame is not a WsHello: {e}: {payload}"))
     }
 }
 
 /// IO 错误 → 闭集 `service_unavailable`（宿主不可达；可重试）。
 fn io_err(e: std::io::Error) -> ContractError {
     ContractError::service_unavailable(format!("host unreachable: {e}"))
+}
+
+/// 读一个**服务端** WS 数据帧（服务端→客户端帧不带掩码），返回文本 payload。
+///
+/// 只承接 hello 帧所需：FIN+text  opcode、7/16/64 位三档长度。控制帧（ping/pong/close）
+/// 不在首帧契约里（axum 自动应答 ping），故不特殊处理。
+async fn read_ws_frame(stream: &mut tokio::net::TcpStream) -> std::io::Result<String> {
+    use tokio::io::AsyncReadExt;
+    let mut header = [0u8; 2];
+    stream.read_exact(&mut header).await?;
+    let opcode = header[0] & 0x0F;
+    if opcode != 0x1 {
+        return Err(std::io::Error::other(format!(
+            "expected a text frame (opcode 0x1), got opcode {opcode}"
+        )));
+    }
+    let len7 = header[1] & 0x7F;
+    let len: u64 = match len7 {
+        126 => {
+            let mut ext = [0u8; 2];
+            stream.read_exact(&mut ext).await?;
+            u16::from_be_bytes(ext) as u64
+        }
+        127 => {
+            let mut ext = [0u8; 8];
+            stream.read_exact(&mut ext).await?;
+            u64::from_be_bytes(ext)
+        }
+        n => n as u64,
+    };
+    let mut payload = vec![0u8; len as usize];
+    stream.read_exact(&mut payload).await?;
+    Ok(String::from_utf8_lossy(&payload).into_owned())
 }
