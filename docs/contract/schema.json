@@ -557,6 +557,11 @@
           "type": "string"
         },
         {
+          "const": "plugin_restarted",
+          "description": "插件崩溃后按分级退避重启（ADR-0004 决策 4；进审计双写 → Kron escalation）。",
+          "type": "string"
+        },
+        {
           "const": "notification_sent",
           "description": "通知通道外发完成（HITL 前半程）。",
           "type": "string"
@@ -1060,7 +1065,7 @@
       "title": "OverlayValueKind"
     },
     "PluginState": {
-      "description": "插件状态（占位闭集；`quarantined` 见 GLOSSARY「隔离」）。",
+      "description": "插件状态（占位闭集；`quarantined` 见 GLOSSARY「隔离」）。\n\n宿主侧插件监督状态（ticket #19 的 `plugin_state` 表）与宿主管理 API 的投影共用\n同一个闭集，所以它是插件管理面的单一源：`CHECK` 约束由 [`PluginState::ALL`] 生成。",
       "oneOf": [
         {
           "enum": [

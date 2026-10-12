@@ -3,6 +3,10 @@
 //! GLOSSARY：`blocked` / `needs_attention` 是一等事件；ADR-0005 §3：关键事件
 //! （派发、merge、审批、stall 判杀、host_restarted）进审计双写。闭集在此单一源定义，
 //! 宿主、面板、编排器三方共用；新增事件种类是**加法**契约变更。
+//!
+//! ticket #19 按 ADR-0004 决策 4「崩溃/重启进 Kron 账（escalation，`actor=farm`）」
+//! **加法**追加 `plugin_restarted` 并纳入审计双写闭集——插件崩溃重启因此与
+//! stall 判杀、宿主重启同路进 Kron（`escalation`），未入账只标记、不阻塞。
 
 use serde::{Deserialize, Serialize};
 
@@ -42,13 +46,15 @@ pub enum EventKind {
     ClaimAcquired,
     /// 插件重试耗尽进入隔离（quarantined）。
     PluginQuarantined,
+    /// 插件崩溃后按分级退避重启（ADR-0004 决策 4；进审计双写 → Kron escalation）。
+    PluginRestarted,
     /// 通知通道外发完成（HITL 前半程）。
     NotificationSent,
 }
 
 impl EventKind {
     /// 闭集的权威清单。
-    pub const ALL: [EventKind; 16] = [
+    pub const ALL: [EventKind; 17] = [
         EventKind::Dispatch,
         EventKind::AttemptStarted,
         EventKind::AgentSettled,
@@ -64,6 +70,7 @@ impl EventKind {
         EventKind::HostRestarted,
         EventKind::ClaimAcquired,
         EventKind::PluginQuarantined,
+        EventKind::PluginRestarted,
         EventKind::NotificationSent,
     ];
 
@@ -85,6 +92,7 @@ impl EventKind {
             EventKind::HostRestarted => "host_restarted",
             EventKind::ClaimAcquired => "claim_acquired",
             EventKind::PluginQuarantined => "plugin_quarantined",
+            EventKind::PluginRestarted => "plugin_restarted",
             EventKind::NotificationSent => "notification_sent",
         }
     }
@@ -103,6 +111,10 @@ impl EventKind {
     }
 
     /// ADR-0005 §3：是否进审计双写（Kron 账本）。
+    ///
+    /// ticket #19 按 ADR-0004 决策 4（崩溃/重启进 Kron 账，escalation，`actor=farm`）
+    /// 把 `plugin_restarted` 纳入闭集：插件崩溃后的分级退避重启与 stall 判杀、
+    /// 宿主重启同路入账。
     pub fn is_audit_critical(&self) -> bool {
         matches!(
             self,
@@ -111,6 +123,7 @@ impl EventKind {
                 | EventKind::Approval
                 | EventKind::StallKill
                 | EventKind::HostRestarted
+                | EventKind::PluginRestarted
         )
     }
 }

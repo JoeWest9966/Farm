@@ -57,6 +57,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(_) => {}
         Err(e) => tracing::warn!(error = %e, "overlay restore prompt failed (non-fatal)"),
     }
+    // 插件骨架（#19，ADR-0004 决策 4）：启动对账（上次 running 的子进程已随宿主死）+
+    // 按清单拉起插件。launch 只等第一次握手（有超时上界），崩溃由监督循环按分级退避
+    // 重试，不阻塞宿主启动。清单经 FARM_PLUGINS（逗号分隔的程序路径）注入。
+    if let Err(e) = farm_core::plugin::reconcile_on_startup(&state.plugin) {
+        tracing::warn!(error = %e, "plugin startup reconcile failed (non-fatal)");
+    }
+    for spec in plugin_manifest() {
+        match state.plugin.launch(&state, &spec).await {
+            Ok(hello) => tracing::info!(
+                plugin = %spec.plugin_id,
+                contract = %hello.contract_version,
+                "plugin launched and handshook (contract client, no private backdoor)"
+            ),
+            Err(e) => tracing::warn!(
+                plugin = %spec.plugin_id,
+                error = %e,
+                "plugin launch failed (supervision retries per tiered backoff)"
+            ),
+        }
+    }
+    let plugin_host = state.plugin.clone();
     let router = build_router(state);
 
     let listener = tokio::net::TcpListener::bind(bind).await?;
@@ -64,8 +85,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     axum::serve(listener, router)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
+    // 宿主停机：有序收尾所有插件（关 stdin → 宽限 → 强杀），一个孤儿都不留（#19）。
+    plugin_host.shutdown_all().await;
     tracing::info!("farm-host stopped");
     Ok(())
+}
+
+/// 插件清单：`FARM_PLUGINS`（逗号分隔的程序路径）→ 每条一个 [`farm_core::plugin::PluginSpec`]。
+/// 每个插件以契约客户端身份接入（与编排器、面板同路），宿主不为它开私有接口。
+fn plugin_manifest() -> Vec<farm_core::plugin::PluginSpec> {
+    std::env::var("FARM_PLUGINS")
+        .ok()
+        .map(|list| {
+            list.split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|program| {
+                    let id = std::path::Path::new(program)
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| program.to_string());
+                    farm_core::plugin::PluginSpec::new(id, program, program)
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn init_tracing() {

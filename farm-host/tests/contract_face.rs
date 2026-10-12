@@ -91,7 +91,7 @@ async fn handshake_with_the_op_token_and_a_compatible_contract_version_returns_t
     assert_eq!(parsed.contract_version, CONTRACT_VERSION);
     assert_eq!(parsed.supported_contract_versions, vec![CONTRACT_VERSION]);
     assert_eq!(parsed.services.len(), 5, "ADR-0001 五服务");
-    assert_eq!(parsed.event_kinds.len(), 16, "事件闭集");
+    assert_eq!(parsed.event_kinds.len(), 17, "事件闭集（#19 加法追加 plugin_restarted）");
     assert_eq!(parsed.auth.http_header, "X-Farm-Token");
     assert!(parsed.auth.ws_upgrade_requires_token);
 }
