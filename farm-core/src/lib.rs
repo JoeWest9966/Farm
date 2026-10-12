@@ -12,6 +12,7 @@ pub mod db;
 pub mod error;
 pub mod event_log;
 pub mod events;
+pub mod merge;
 pub mod migrations;
 pub mod state;
 pub mod tracker;
@@ -23,6 +24,10 @@ pub use db::{AppliedMigration, Database};
 pub use error::CoreError;
 pub use event_log::{EventLog, EventLogFilter};
 pub use migrations::{Migration, Migrator, MIGRATIONS};
+pub use merge::{
+    MergeConfig, MergeError, MergeProposalRecord, MergeReport, MergeService, ProjectionOutcome,
+    ProjectionStatus, ProjectionSwitch, RejectionStage,
+};
 pub use state::AppState;
 pub use tracker::{Issue, IssueState, TrackerError, TrackerService};
 pub use workspace::{
