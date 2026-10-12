@@ -20,6 +20,9 @@ thiserror.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+# 只为「配置回退要留一声告警」的日志捕获测试（code review P2-12）而引入；
+# 版本已在 workspace 解析过，不新增锁定条目。
+tracing-subscriber.workspace = true
 
 # fake pi RPC 测试替身（ticket #16）：说文档化 1.0.2 wire protocol 的 JSONL 进程。
 # 集成测试经 `CARGO_BIN_EXE_fake-pi` 拿到它的绝对路径。
