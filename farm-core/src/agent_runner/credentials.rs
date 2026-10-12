@@ -4,14 +4,20 @@
 //! > 零落盘，凭据在 Farm 进程内存中的存活时间 = 子进程 spawn 窗口。取凭据失败即 spawn
 //! > 失败，走 `needs_attention`。
 //!
-//! 本票（#16）只落地**接口与注入面**：`CredentialCourier` 由 #17 实现（Warehouse 的
-//! `nw key get` 子进程），这里保证三件事可被断言：
+//! 本模块先由 #16 落地**接口与注入面**（`CredentialCourier` trait + `EnvPolicy` + 几个测试替身），
+//! 保证三件事可被断言：
 //!
 //! 1. 凭据**只进 pi 子进程**（env 是单向注入的，宿主自己的 `env` 不被污染）；
 //! 2. 取凭据失败 → spawn 失败 → `needs_attention`（不是 attempt failed 的重试语义）；
 //! 3. 环境策略可被收窄成「只给这些变量」（测试与最小权限面用）。
+//!
+//! #17 落地**真凭据源** [`WarehouseCourier`]：spawn 前子进程调 `nw key get`，解析 Warehouse
+//! 的 JSON envelope，把 env 对交回 spawn 窗口注入 pi 子进程。Farm 仍零缓存零落盘——凭据在
+//! Farm 进程内存中的存活时间 = spawn 窗口。另留 [`credentials_leaked_into`] 作 #19 联测接缝。
 
 use std::process::Command as StdCommand;
+
+use serde_json::Value;
 
 use crate::error::CoreError;
 
@@ -163,6 +169,75 @@ impl CredentialCourier for FailingCredentialCourier {
     }
 }
 
+/// 解析 `nw key get <key>` 子进程打印的**一份 Warehouse JSON envelope**，取出要注入的 env 对。
+///
+/// Warehouse 契约（`docs/research/report-nous-family.md` §2.4）：stdout 只有一份 envelope，
+/// `{"schema":"nw/key.v1","ok":<bool>,"errors":[...],"data":{"env":..,"value":..}}`，
+/// `ok == (exitCode == 0)`。env 变量名由 **Warehouse 说了算**（GLOSSARY：Farm 是过路财神，不是
+/// 凭据保管人）——Farm 只忠实注入它返回的 `data.env`/`data.value`。
+///
+/// fail-closed：退出码非 0、`ok=false`、缺 `data.env`/`data.value`、或 stdout 不是合法 JSON，
+/// 一律 `Err`（→ spawn 失败 → `needs_attention`），绝不静默降级成空凭据。
+///
+/// 独立真源是 Warehouse 的字面量契约；本函数是纯函数（无子进程），单测按已知字面量断言。
+pub fn parse_nw_key_response(
+    key: &str,
+    exited_ok: bool,
+    stdout: &str,
+) -> Result<(String, String), CoreError> {
+    let envelope: Value = serde_json::from_str(stdout).map_err(|e| {
+        CoreError::Config(format!(
+            "`nw key get {key}` did not print a JSON envelope: {e}"
+        ))
+    })?;
+    let ok = envelope.get("ok").and_then(Value::as_bool).unwrap_or(false);
+    if !exited_ok || !ok {
+        let errors = envelope.get("errors").cloned().unwrap_or(Value::Null);
+        return Err(CoreError::Config(format!(
+            "`nw key get {key}` failed (exit_ok={exited_ok}, ok={ok}): {errors}"
+        )));
+    }
+    let data = envelope.get("data").ok_or_else(|| {
+        CoreError::Config(format!("`nw key get {key}` envelope carried no data"))
+    })?;
+    let env = data
+        .get("env")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            CoreError::Config(format!("`nw key get {key}` data has no env var name to inject"))
+        })?
+        .to_string();
+    let value = data
+        .get("value")
+        .and_then(Value::as_str)
+        .ok_or_else(|| CoreError::Config(format!("`nw key get {key}` data has no value")))?
+        .to_string();
+    Ok((env, value))
+}
+
+/// **#19 联测接缝**：凭据 env 是否泄漏进了某个进程环境。
+///
+/// 给定「观测到的进程 env」与「凭据 env 对」（本票 fake nw 返回的，或 #19 自备样本），返回
+/// 同时命中「键相同且值相同」的键名——空 = 没泄漏。插件宿主（#19）spawn 插件进程后用它机械
+/// 校验 ADR-0004 决策 3 的不变量：凭据只进 pi 子进程，绝不外溢到插件进程环境。
+///
+/// Farm 从不把凭据注入插件进程：凭据只经 [`crate::agent_runner::process::PiSpawnPlan`] 进 pi
+/// 子进程，插件 env 由插件宿主另行装配，两者结构隔离。这条断言是联测时对那条不变量的兜底。
+pub fn credentials_leaked_into(
+    observed_env: &[(String, String)],
+    credential_pairs: &[(String, String)],
+) -> Vec<String> {
+    credential_pairs
+        .iter()
+        .filter(|(key, value)| {
+            observed_env
+                .iter()
+                .any(|(obs_key, obs_value)| obs_key == key && obs_value == value)
+        })
+        .map(|(key, _)| key.clone())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -221,5 +296,75 @@ mod tests {
             })
             .expect("no credentials");
         assert!(pairs.is_empty());
+    }
+
+    // --- #17: Warehouse `nw key get` envelope 解析（纯函数，无子进程）---
+
+    #[test]
+    fn a_well_formed_nw_key_envelope_yields_the_env_pair_warehouse_dictates() {
+        // 独立真源 = Warehouse 契约字面量（`ok==true` + `data.{env,value}`）；不重算实现。
+        let stdout = r#"{"schema":"nw/key.v1","nw":"0.1.0","ok":true,"errors":[],"warnings":[],"data":{"env":"FARM_GH_TOKEN","value":"ghp_passthrough_literal"}}"#;
+        let pair = parse_nw_key_response("github-token", true, stdout)
+            .expect("a well-formed ok envelope must yield the env pair");
+        assert_eq!(pair, ("FARM_GH_TOKEN".to_string(), "ghp_passthrough_literal".to_string()));
+    }
+
+    #[test]
+    fn an_nw_key_envelope_with_ok_false_is_a_spawn_failure_even_on_exit_zero() {
+        let stdout = r#"{"schema":"nw/key.v1","ok":false,"errors":[{"code":"FORBIDDEN","message":"denied"}],"data":null}"#;
+        let error = parse_nw_key_response("github-token", true, stdout)
+            .expect_err("ok=false must surface as a spawn-blocking error");
+        let text = error.to_string();
+        assert!(text.contains("github-token"), "{text}");
+        assert!(text.contains("FORBIDDEN"), "错误要带上 warehouse 的原因: {text}");
+    }
+
+    #[test]
+    fn a_nonzero_nw_exit_is_a_spawn_failure_even_if_stdout_looks_fine() {
+        // exit!=0 一律失败，绝不因为 stdout 像成功就放行（fail-closed）。
+        let stdout = r#"{"schema":"nw/key.v1","ok":true,"data":{"env":"X","value":"y"}}"#;
+        let error = parse_nw_key_response("github-token", false, stdout)
+            .expect_err("a non-zero exit must fail the spawn");
+        assert!(error.to_string().contains("github-token"), "{error}");
+    }
+
+    #[test]
+    fn an_nw_key_envelope_missing_the_env_name_is_a_spawn_failure() {
+        let stdout = r#"{"schema":"nw/key.v1","ok":true,"errors":[],"data":{"value":"orphan"}}"#;
+        let error = parse_nw_key_response("github-token", true, stdout)
+            .expect_err("data without an env var name cannot be injected");
+        assert!(error.to_string().contains("env"), "{error}");
+    }
+
+    #[test]
+    fn non_json_nw_output_is_a_spawn_failure_not_a_silent_empty() {
+        let error = parse_nw_key_response("github-token", true, "not json at all")
+            .expect_err("unparseable output must fail, never degrade to empty");
+        assert!(error.to_string().contains("JSON envelope"), "{error}");
+    }
+
+    // --- #17: #19 联测接缝 —— 凭据 env 绝不泄漏进插件进程环境 ---
+
+    #[test]
+    fn credentials_leaked_into_reports_only_exact_key_and_value_matches() {
+        let credentials = vec![("FARM_GH_TOKEN".to_string(), "ghp_secret".to_string())];
+        // 插件进程 env 里有同名但不同值 → 不算泄漏（凭据值没过去）。
+        let observed = vec![
+            ("FARM_GH_TOKEN".to_string(), "someone-elses".to_string()),
+            ("PATH".to_string(), "/usr/bin".to_string()),
+        ];
+        assert!(
+            credentials_leaked_into(&observed, &credentials).is_empty(),
+            "值不同不算泄漏"
+        );
+        // 键值都中 → 报出来。
+        let leaked = vec![
+            ("PATH".to_string(), "/usr/bin".to_string()),
+            ("FARM_GH_TOKEN".to_string(), "ghp_secret".to_string()),
+        ];
+        assert_eq!(
+            credentials_leaked_into(&leaked, &credentials),
+            vec!["FARM_GH_TOKEN".to_string()]
+        );
     }
 }
