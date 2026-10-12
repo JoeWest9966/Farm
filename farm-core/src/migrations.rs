@@ -1,12 +1,17 @@
 //! 版本化顺序 migration runner（ADR-0005 §7）。
 //!
 //! 全局单库、顺序 migration：版本号严格升序，已落地的跳过，未落地的一次一条事务。
-//! 服务域表（票快照、attempts、事件日志、workspace 映射、覆盖层、通知通道配置）
-//! **不在这里**——归 #13–#15 各自追加，追加即加法演进。
+//!
+//! **按五服务分域**（ADR-0005 §5）的组织先例由 #13 建立：服务域表**不在这里**，
+//! 住在各服务自己的 `farm-core/src/<service>/migrations.rs`；本文件只是**版本登记表**
+//! （`up: tracker::migrations::v3_...`）。版本号在集成分支上协调分配：#11 = v1
+//! `host_meta`，#13 = v3 tracker 票快照与状态历史（v2 仍空置，未被任何票占用）；
+//! 后续服务域（#14/#15/#18…）依合并顺序取 v4/v5/…，只准追加、不准改历史版本。
 
 use rusqlite::Connection;
 
 use crate::error::CoreError;
+use crate::tracker;
 
 /// 一条 migration。`up` 在一个事务里执行，失败整体回滚。
 #[derive(Clone)]
@@ -65,10 +70,19 @@ fn v1_host_meta(conn: &Connection) -> rusqlite::Result<()> {
     )
 }
 
-/// 骨架 migration 集：只建 runner 自己的工作表与一张宿主级 key/value 表。
-/// 服务域表由 #13–#15 追加（加法演进，不改这里的历史版本）。
-pub const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "host_meta",
-    up: v1_host_meta,
-}];
+/// 骨架 migration 集：runner 自己的工作表 + 宿主级 key/value 表 + tracker 服务域表。
+///
+/// 服务域的 SQL 不住这里（按五服务分域，见模块文档）：这里只按版本登记。
+pub const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "host_meta",
+        up: v1_host_meta,
+    },
+    // --- tracker 服务域（#13）：票快照 + blocking 边 + 状态历史 ---
+    Migration {
+        version: 3,
+        name: "tracker_issue_snapshot",
+        up: tracker::migrations::v3_tracker_issue_snapshot,
+    },
+];
