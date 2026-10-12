@@ -354,6 +354,212 @@ impl MergeService {
     }
 
     // -----------------------------------------------------------------------
+    // 人工审阅（ticket #25）：人工闸门叠加在机械闸门之上
+    // -----------------------------------------------------------------------
+
+    /// 提交 merge 提议进入**人工审阅队列**：只 write-ahead 落账（state=proposed）+
+    /// 发审阅期 needs_attention，**不**跑机械闸门、不执行。完成信号仍由 approve 后的
+    /// 机械 merge 产生——人工闸门叠加在机械闸门之上，永不替代它。
+    pub fn submit_for_review(
+        &self,
+        host: &AppState,
+        proposal: &MergeProposal,
+    ) -> Result<String, MergeError> {
+        let ticket_id = proposal.ticket_id.trim();
+        let worktree_branch = proposal.worktree_branch.trim();
+        if ticket_id.is_empty() || worktree_branch.is_empty() {
+            return Err(MergeError::Invalid(
+                "a merge proposal needs a non-empty ticket_id and worktree_branch".into(),
+            ));
+        }
+        let mapping = host
+            .workspace
+            .find_by_branch(worktree_branch)
+            .map_err(MergeError::Workspace)?
+            .ok_or_else(|| {
+                MergeError::NotFound(format!(
+                    "no workspace mapping for worktree branch `{worktree_branch}`"
+                ))
+            })?;
+        let record = MergeProposalRecord::proposed(
+            self.next_proposal_id(),
+            ticket_id,
+            worktree_branch,
+            &mapping.integration_branch,
+            &mapping.repo_path,
+            &mapping.worktree_path,
+            proposal.commit.as_deref(),
+            proposal.message.as_deref().unwrap_or_default(),
+            &crate::now_rfc3339(),
+        );
+        let id = record.proposal_id.clone();
+        self.store.save(&record)?;
+        // 审阅期 needs_attention 是一等事件（GLOSSARY：面板必渲染）。
+        host.publish(
+            NewEvent::new(EventKind::NeedsAttention, "merge")
+                .with_ticket(ticket_id)
+                .with_payload(serde_json::json!({
+                    "proposal_id": id,
+                    "worktree_branch": worktree_branch,
+                    "integration_branch": mapping.integration_branch,
+                    "review": "awaiting_human_approval",
+                    "completion_signal": "none",
+                })),
+        )?;
+        Ok(id)
+    }
+
+    /// 批准一个审阅队列里的提议：先记审批决策（EventKind::Approval → Kron 审批账），
+    /// **再**跑机械闸门（validate → execute → project → announce）。批准≠必合入——
+    /// 机械校验照跑，任一不过照样拒收、无完成信号（人工闸门只叠加，不替代）。
+    pub async fn approve(
+        &self,
+        host: &AppState,
+        proposal_id: &str,
+        reviewer: &str,
+    ) -> Result<MergeReport, MergeError> {
+        let mut record = self
+            .store
+            .find(proposal_id)?
+            .ok_or_else(|| MergeError::NotFound(format!("no merge proposal `{proposal_id}`")))?;
+        if record.state != MergeProposalState::Proposed {
+            return Err(MergeError::Invalid(format!(
+                "proposal `{proposal_id}` is not awaiting review (state {:?})",
+                record.state
+            )));
+        }
+        // 人工闸门的决策留痕：进 Kron 审批账（审计双写，ADR-0004 决策 2）。
+        self.announce_approval(host, &record, reviewer, true)?;
+        // 机械闸门照跑（复用 propose 的同一套私有件）。
+        let mapping = host
+            .workspace
+            .find_by_branch(&record.worktree_branch)
+            .map_err(MergeError::Workspace)?
+            .ok_or_else(|| {
+                MergeError::NotFound(format!(
+                    "no workspace mapping for worktree branch `{}`",
+                    record.worktree_branch
+                ))
+            })?;
+        let proposal = MergeProposal {
+            ticket_id: record.ticket_id.clone(),
+            worktree_branch: record.worktree_branch.clone(),
+            commit: record.claimed_commit.clone(),
+            message: Some(record.message.clone()),
+        };
+        if let Err(err) = self.validate(proposal_id, &mapping, &proposal).await {
+            if let MergeError::Rejected { stage, detail, .. } = &err {
+                let at = crate::now_rfc3339();
+                record.mark_rejected(stage.as_str(), ErrorCode::Conflict.as_str(), detail, &at);
+                self.store.save(&record)?;
+                self.announce_rejection(host, &record, *stage, detail)?;
+            }
+            return Err(err);
+        }
+        let at = crate::now_rfc3339();
+        record.mark_validated(&at);
+        self.store.save(&record)?;
+        let merge_commit = self.execute(&mapping, &proposal)?;
+        record.mark_merged(&merge_commit, &crate::now_rfc3339());
+        let outcomes =
+            projection::run(host, &mapping.repo_path, &mapping.ticket_id, &merge_commit);
+        record.set_projection(outcomes.clone(), &crate::now_rfc3339());
+        self.store.save(&record)?;
+        self.announce_merge(host, &record, &merge_commit, &outcomes)?;
+        Ok(MergeReport {
+            proposal_id: record.proposal_id,
+            state: MergeProposalState::Merged,
+            merge_commit: Some(merge_commit),
+            projection: outcomes,
+        })
+    }
+
+    /// 拒绝一个审阅队列里的提议：记审批决策（rejected → Kron 审批账）+ 标 rejected +
+    /// 发事件回 agent（一等 needs_attention，闭集错误回 agent）。无完成信号。
+    pub fn reject(
+        &self,
+        host: &AppState,
+        proposal_id: &str,
+        reviewer: &str,
+        reason: &str,
+    ) -> Result<(), MergeError> {
+        let mut record = self
+            .store
+            .find(proposal_id)?
+            .ok_or_else(|| MergeError::NotFound(format!("no merge proposal `{proposal_id}`")))?;
+        if record.state != MergeProposalState::Proposed {
+            return Err(MergeError::Invalid(format!(
+                "proposal `{proposal_id}` is not awaiting review (state {:?})",
+                record.state
+            )));
+        }
+        self.announce_approval(host, &record, reviewer, false)?;
+        let reason = reason.trim();
+        let detail = if reason.is_empty() {
+            "rejected by human reviewer"
+        } else {
+            reason
+        };
+        record.mark_rejected(
+            "human_rejected",
+            ErrorCode::Conflict.as_str(),
+            detail,
+            &crate::now_rfc3339(),
+        );
+        self.store.save(&record)?;
+        // 拒绝 → 事件回 agent（一等 needs_attention，闭集 conflict）。
+        host.publish(
+            NewEvent::new(EventKind::NeedsAttention, "merge")
+                .with_ticket(&record.ticket_id)
+                .with_payload(serde_json::json!({
+                    "proposal_id": record.proposal_id,
+                    "worktree_branch": record.worktree_branch,
+                    "integration_branch": record.integration_branch,
+                    "stage": "human_rejected",
+                    "code": ErrorCode::Conflict.as_str(),
+                    "reviewer": reviewer,
+                    "detail": detail,
+                    "completion_signal": "none",
+                })),
+        )?;
+        Ok(())
+    }
+
+    /// 提议的 diff（面板审阅时呈现）：集成分支 tip 与 worktree 分支 tip 的差异。
+    pub fn diff(&self, proposal_id: &str) -> Result<String, MergeError> {
+        let record = self
+            .store
+            .find(proposal_id)?
+            .ok_or_else(|| MergeError::NotFound(format!("no merge proposal `{proposal_id}`")))?;
+        git::diff_between(
+            Path::new(&record.repo_path),
+            &record.integration_branch,
+            &record.worktree_branch,
+        )
+    }
+
+    /// 审批决策留痕：EventKind::Approval 经持久发布路径 → 审计双写 → Kron 审批账。
+    /// 决策（approved/rejected）与审阅人进载荷——人工闸门的机械留痕（ADR-0004 决策 2）。
+    fn announce_approval(
+        &self,
+        host: &AppState,
+        record: &MergeProposalRecord,
+        reviewer: &str,
+        approved: bool,
+    ) -> Result<(), MergeError> {
+        host.publish(
+            NewEvent::new(EventKind::Approval, "merge")
+                .with_ticket(&record.ticket_id)
+                .with_payload(serde_json::json!({
+                    "proposal_id": record.proposal_id,
+                    "reviewer": reviewer,
+                    "decision": if approved { "approved" } else { "rejected" },
+                })),
+        )?;
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
     // 机械校验（每一项都是一个确定的否定结论，不是一个异常）
     // -----------------------------------------------------------------------
 
