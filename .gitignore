@@ -1,0 +1,16 @@
+# Rust
+/target
+**/*.rs.bk
+
+# Node (if a JS tooling layer appears later)
+node_modules/
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Local scratch that is not part of the plan
+.scratch/tmp/
