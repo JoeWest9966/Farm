@@ -17,6 +17,7 @@
 //! axum `Router`，所以测试在真实接缝上断言，不另造一个 app。
 
 pub mod admin;
+pub mod agent_runner;
 pub mod auth;
 pub mod contract;
 pub mod error;
@@ -46,6 +47,11 @@ const TRACKER_CLAIMS_PATH: &str = "/v1/tracker/claims";
 /// Workspace 服务映射视图（ticket #14 打通）：`GET /v1/workspace/mappings`。
 const WORKSPACE_MAPPINGS_PATH: &str = "/v1/workspace/mappings";
 
+/// Agent-Runner 三条路由（ticket #16 打通）：派发 + steer/abort 注入。
+const AGENT_DISPATCH_PATH: &str = "/v1/agent-runner/dispatches";
+const AGENT_STEER_PATH: &str = "/v1/agent-runner/attempts/{attempt_id}/steer";
+const AGENT_ABORT_PATH: &str = "/v1/agent-runner/attempts/{attempt_id}/abort";
+
 /// 装配宿主路由：三个面 + 统一的闭集 404/405 兜底。
 ///
 /// 路由表是单一源（`farm-sdk::routes`）：宿主按表挂载，所以表里新增一条路由
@@ -60,6 +66,9 @@ pub fn build_router(state: AppState) -> Router {
             TRACKER_ISSUES_PATH => get(contract::tracker_issues),
             TRACKER_CLAIMS_PATH => post(contract::tracker_claims),
             WORKSPACE_MAPPINGS_PATH => get(workspace::list_mappings),
+            AGENT_DISPATCH_PATH => post(agent_runner::dispatch),
+            AGENT_STEER_PATH => post(agent_runner::steer),
+            AGENT_ABORT_PATH => post(agent_runner::abort),
             _ => match route.method {
                 "GET" => get(contract::not_implemented_placeholder),
                 "POST" => post(contract::not_implemented_placeholder),
