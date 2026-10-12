@@ -9,6 +9,7 @@
 pub mod agent_runner;
 pub mod audit;
 pub mod config;
+pub mod control;
 pub mod db;
 pub mod error;
 pub mod event_log;
@@ -24,6 +25,7 @@ pub mod workflow;
 
 pub use audit::{AuditSink, AuditOutcome};
 pub use config::HostConfig;
+pub use control::TickControl;
 pub use db::{AppliedMigration, Database};
 pub use error::CoreError;
 pub use event_log::{EventLog, EventLogFilter};
