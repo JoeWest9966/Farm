@@ -417,6 +417,61 @@ impl WorkspaceService {
         Ok(view)
     }
 
+    /// **启动对账**（ADR-0005 §9）：逐票看 worktree 目录——健康则确认 `built`；
+    /// 缺/损则尝试 `git worktree add` 重建（→`built`），重建不了则标 `broken`。
+    pub fn reconcile(&self) -> Result<ReconcileReport, WorkspaceError> {
+        let mut report = ReconcileReport::default();
+        for row in self.list()? {
+            if Self::worktree_is_healthy(Path::new(&row.worktree_path)) {
+                if row.status != MappingStatus::Built {
+                    self.set_status(&row.ticket_id, MappingStatus::Built)?;
+                }
+                report.healthy.push(row.ticket_id);
+            } else {
+                match worktree_add(&row) {
+                    Ok(()) => {
+                        self.set_status(&row.ticket_id, MappingStatus::Built)?;
+                        report.rebuilt.push(row.ticket_id);
+                    }
+                    Err(_) => {
+                        self.set_status(&row.ticket_id, MappingStatus::Broken)?;
+                        report.marked_broken.push(row.ticket_id);
+                    }
+                }
+            }
+        }
+        Ok(report)
+    }
+
+    /// 全部 `broken` 映射（merge 服务拒收清单 / 面板告警源）。
+    pub fn broken(&self) -> Result<Vec<MappingRow>, WorkspaceError> {
+        self.db
+            .with_conn(|conn| {
+                let mut stmt =
+                    conn.prepare(&format!("{SELECT_COLS} WHERE status = 'broken' ORDER BY ticket_id"))?;
+                let rows = stmt.query_map([], row_from_query)?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()
+            })
+            .map_err(WorkspaceError::Store)
+    }
+
+    /// 按 worktree 分支查一行（分支全局唯一；merge 提议带分支，是 merge 的主查询柄）。
+    pub fn find_by_branch(&self, branch: &str) -> Result<Option<MappingRow>, WorkspaceError> {
+        self.db
+            .with_conn(|conn| {
+                let mut stmt =
+                    conn.prepare(&format!("{SELECT_COLS} WHERE worktree_branch = ?1"))?;
+                let mut rows = stmt.query_map([branch], row_from_query)?;
+                rows.next().transpose()
+            })
+            .map_err(WorkspaceError::Store)
+    }
+
+    /// 按 worktree 分支查状态（merge 拒收 broken 的便捷判断）。
+    pub fn status_of_branch(&self, branch: &str) -> Result<Option<MappingStatus>, WorkspaceError> {
+        Ok(self.find_by_branch(branch)?.map(|r| r.status))
+    }
+
     /// 更新状态与 `updated_at`（内部；由 build/reconcile 驱动）。
     fn set_status(
         &self,

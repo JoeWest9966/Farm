@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use farm_core::db::Database;
+use farm_core::migrations::{Migrator, MIGRATIONS};
 use farm_core::workspace::{EstablishRequest, MappingStatus, WorkspaceService};
 use farm_sdk::services::workspace::WorktreeState;
 
@@ -34,6 +35,21 @@ fn establish_request(ticket: &str, branch: &str) -> EstablishRequest {
         worktree_branch: branch.into(),
         start_point: None,
     }
+}
+
+/// 落盘的宿主私有存储（同 `AppState::new`）：供「重启」场景重开同一个 farm.db。
+fn file_backed() -> (tempfile::TempDir, Database) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db = Database::open(dir.path().join("farm.db")).expect("open store");
+    db.migrate(&Migrator::new(MIGRATIONS)).expect("migrate");
+    (dir, db)
+}
+
+/// 模拟重启：重开同一个 farm.db 文件（新进程做的正是这件事）。
+fn reopen(dir: &tempfile::TempDir) -> WorkspaceService {
+    let db = Database::open(dir.path().join("farm.db")).expect("reopen store");
+    db.migrate(&Migrator::new(MIGRATIONS)).expect("reopen migrate");
+    WorkspaceService::new(db)
 }
 
 /// 建一个带初始 commit 的 scratch git 仓库（`git worktree add` 需要有 HEAD）。
@@ -142,4 +158,70 @@ fn establish_builds_the_worktree_and_cleanup_removes_it_the_full_chain() {
     assert!(!worktree_path.exists(), "清理后 worktree 目录没了");
     assert_eq!(svc.find("14").expect("find"), None, "清理后映射行删掉");
     assert!(svc.list().expect("list").is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// S3 — write-ahead 崩溃恢复：启动对账重建或标 broken；broken 可查询（为 merge 拒收）
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_kill_between_write_ahead_and_build_is_recovered_by_startup_reconcile_rebuilding() {
+    let (dir, db) = file_backed();
+    let repo = scratch_repo();
+    let wt_parent = tempfile::tempdir().expect("worktree parent dir");
+    let worktree_path = wt_parent.path().join("t14");
+    let req = EstablishRequest {
+        spec_id: "spec-10".into(),
+        integration_branch: "implement/spec-10".into(),
+        ticket_id: "14".into(),
+        repo_path: repo.path().to_path_buf(),
+        worktree_path: worktree_path.clone(),
+        worktree_branch: "farm/t14".into(),
+        start_point: Some("HEAD".into()),
+    };
+
+    {
+        // write-ahead：只 reserve（映射先写、worktree 未建），模拟在建 worktree 前进程被杀。
+        let svc = WorkspaceService::new(db.clone());
+        svc.reserve(&req).expect("write-ahead reserve");
+        assert_eq!(svc.status_of("14").expect("status"), Some(MappingStatus::Pending));
+        assert!(!worktree_path.exists(), "被杀时 worktree 尚未建");
+    }
+
+    // 重启：重开同一个 farm.db，启动对账发现「映射在、目录缺」→ 重建。
+    let svc = reopen(&dir);
+    let report = svc.reconcile().expect("reconcile");
+    assert_eq!(report.rebuilt, vec!["14".to_string()], "目录缺 → 重建");
+    assert_eq!(svc.status_of("14").expect("status"), Some(MappingStatus::Built));
+    assert!(worktree_path.join(".git").exists(), "重建后 worktree 在");
+}
+
+#[test]
+fn a_mapping_whose_worktree_cannot_be_rebuilt_is_marked_broken_and_stays_queryable() {
+    let (dir, db) = file_backed();
+    {
+        let svc = WorkspaceService::new(db.clone());
+        // repo_path 指向不存在的仓库 → 对账重建必然失败 → 标 broken。
+        svc.reserve(&establish_request("99", "farm/t99"))
+            .expect("write-ahead reserve");
+    }
+
+    let svc = reopen(&dir);
+    let report = svc.reconcile().expect("reconcile");
+    assert_eq!(report.marked_broken, vec!["99".to_string()], "重建不了 → 标 broken");
+    assert_eq!(svc.status_of("99").expect("status"), Some(MappingStatus::Broken));
+
+    // broken 映射可被查询（为 merge 服务拒收做准备）：按状态、按分支都能拿到。
+    let broken = svc.broken().expect("broken list");
+    assert_eq!(broken.len(), 1);
+    assert_eq!(broken[0].ticket_id, "99");
+    assert_eq!(broken[0].status, MappingStatus::Broken);
+    assert_eq!(
+        svc.status_of_branch("farm/t99").expect("by branch"),
+        Some(MappingStatus::Broken)
+    );
+    assert_eq!(
+        svc.find_by_branch("farm/t99").expect("find by branch").map(|r| r.status),
+        Some(MappingStatus::Broken)
+    );
 }
