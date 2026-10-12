@@ -80,6 +80,12 @@ pub const CONTRACT_ROUTES: &[RouteSpec] = &[
         path: "/v1/merge/proposals",
         summary: "agent 提议 merge（宿主校验后执行）",
     },
+    RouteSpec {
+        service: ServiceName::Merge,
+        method: "POST",
+        path: "/v1/merge/reviews",
+        summary: "agent 提交 merge 提议进人工审阅队列（不自动执行；批准/拒绝走宿主管理 API，#25）",
+    },
     // --- Workspace 服务 ---
     RouteSpec {
         service: ServiceName::Workspace,
@@ -156,6 +162,26 @@ pub const ADMIN_ROUTES: &[AdminRouteSpec] = &[
         method: "GET",
         path: "/admin/workflow/config/{repo_id}",
         summary: "查询某被编排仓库当前生效的 workflow 配置与 LKG 状态（ticket #12）",
+    },
+    AdminRouteSpec {
+        method: "GET",
+        path: "/admin/merge/proposals",
+        summary: "merge 审阅队列（人在面板上审阅提议，#25）",
+    },
+    AdminRouteSpec {
+        method: "GET",
+        path: "/admin/merge/proposals/{id}",
+        summary: "单个 merge 提议详情 + diff（面板审阅呈现，#25）",
+    },
+    AdminRouteSpec {
+        method: "POST",
+        path: "/admin/merge/proposals/{id}/approve",
+        summary: "批准 merge 提议：记审批决策入 Kron + 跑机械闸门出 merge commit（#25）",
+    },
+    AdminRouteSpec {
+        method: "POST",
+        path: "/admin/merge/proposals/{id}/reject",
+        summary: "拒绝 merge 提议：记审批决策入 Kron + 闭集错误回 agent（#25）",
     },
 ];
 
