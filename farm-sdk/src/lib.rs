@@ -18,6 +18,7 @@ pub mod docs;
 pub mod error;
 pub mod events;
 pub mod handshake;
+pub mod notifier;
 pub mod overlay;
 pub mod routes;
 pub mod services;
@@ -34,6 +35,7 @@ pub use handshake::{
     is_compatible, AuthScheme, ClientInfo, ClientKind, HandshakeRequest, HandshakeResponse,
     ADMIN_PREFIX, CONTRACT_MAJOR, CONTRACT_PREFIX, CONTRACT_VERSION, HANDSHAKE_PATH, HOST_VERSION,
 };
+pub use notifier::{NotificationChannelConfig, NotificationChannelUpdate, NotifierFilter};
 pub use routes::{contract_path, AdminRouteSpec, RouteSpec, ADMIN_ROUTES, CONTRACT_ROUTES};
 pub use services::ServiceName;
 pub use services::agent_runner::{
