@@ -494,6 +494,27 @@ mod tests {
     // --- #17: #19 联测接缝 —— 凭据 env 绝不泄漏进插件进程环境 ---
 
     #[test]
+    fn a_missing_nw_binary_fails_the_spawn_fail_closed() {
+        // 配置里 nw 路径写错：spawn 子进程直接 Io 失败 → collect 报错（绝不静默注入空凭据）。
+        let courier = WarehouseCourier::new(
+            "/nonexistent/nw-binary-ticket-17",
+            vec!["github-token".to_string()],
+        )
+        .with_timeout(Duration::from_secs(2));
+        let error = courier
+            .collect(&CredentialRequest {
+                ticket: "17".into(),
+                attempt_id: "att-missing".into(),
+                profile: None,
+            })
+            .expect_err("a missing nw binary must fail the spawn, never inject nothing");
+        assert!(
+            matches!(error, CoreError::Io(_)),
+            "fail-closed on a missing nw binary: {error}"
+        );
+    }
+
+    #[test]
     fn credentials_leaked_into_reports_only_exact_key_and_value_matches() {
         let credentials = vec![("FARM_GH_TOKEN".to_string(), "ghp_secret".to_string())];
         // 插件进程 env 里有同名但不同值 → 不算泄漏（凭据值没过去）。
