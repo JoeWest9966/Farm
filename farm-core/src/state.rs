@@ -1,10 +1,10 @@
 //! 共享运行时状态（`AppState`）：farm-host 与五服务共同的底座。
 //!
-//! 本票（#11）只含底座：`config` + 宿主私有存储 `db` + 内存事件总线 `events`。
+//! 底座（#11）：`config` + 宿主私有存储 `db` + 内存事件总线 `events`。
 //! ticket #15 加法追加事件日志句柄 `event_log` 与**持久化发布路径** [`AppState::publish`]。
-//! 服务域状态（tracker/agent-runner/merge/workspace 的句柄）由 #13–#18 **加法追加**，
-//! 不改这里的历史形状。SQLite schema 永不外泄为契约（ADR-0005 §5）：面板与插件
-//! 都不直连 DB，一切读走契约 API / 宿主投影 API。
+//! 服务域状态（tracker/agent-runner/merge/workspace/workflow 的句柄）由各服务票
+//! **加法追加**，不改这里的历史形状。SQLite schema 永不外泄为契约（ADR-0005 §5）：
+//! 面板与插件都不直连 DB，一切读走契约 API / 宿主投影 API。
 
 use std::sync::Arc;
 
@@ -14,6 +14,9 @@ use crate::error::CoreError;
 use crate::event_log::EventLog;
 use crate::events::EventBus;
 use crate::migrations::{Migrator, MIGRATIONS};
+use crate::tracker::{NativeAdapter, TrackerService};
+use crate::workflow::WorkflowService;
+use crate::workspace::WorkspaceService;
 use farm_sdk::events::{EventEnvelope, NewEvent};
 
 /// 宿主共享状态。`Clone` 廉价（内部 `Arc`/`Clone`），可被 axum handler 广泛共享。
@@ -26,6 +29,14 @@ pub struct AppState {
     /// 事件日志句柄：事件回流面的**持久面**（数据在 `db` 的 `events` 表里）。
     /// 只持有保留窗口，可廉价复制；保留窗口可覆写（数值归宿主/workflow 配置，#12）。
     pub event_log: EventLog,
+    /// Tracker 服务句柄（#13）：归一化视图 + 原子 claim 的唯一入口。
+    ///
+    /// 面板与编排器都经契约路由打到这同一个句柄——tracker 是总线。
+    pub tracker: TrackerService,
+    /// Workflow 配置装载 + last-known-good（ticket #12；查询 API 的数据源）。
+    pub workflow: WorkflowService,
+    /// Workspace 服务句柄（#14，加法追加）：持有 spec↔集成分支↔worktree 映射。
+    pub workspace: WorkspaceService,
 }
 
 impl AppState {
@@ -33,11 +44,15 @@ impl AppState {
     pub fn new(config: HostConfig) -> Result<Self, CoreError> {
         let db = Database::open(&config.db_path)?;
         db.migrate(&Migrator::new(MIGRATIONS))?;
+        let events = EventBus::new();
         Ok(Self {
             config: Arc::new(config),
-            db,
-            events: EventBus::new(),
+            tracker: default_tracker(&db),
+            workflow: WorkflowService::new(db.clone(), events.clone()),
+            workspace: WorkspaceService::new(db.clone()),
             event_log: EventLog::new(),
+            db,
+            events,
         })
     }
 
@@ -45,11 +60,15 @@ impl AppState {
     pub fn new_in_memory(config: HostConfig) -> Result<Self, CoreError> {
         let db = Database::open_in_memory()?;
         db.migrate(&Migrator::new(MIGRATIONS))?;
+        let events = EventBus::new();
         Ok(Self {
             config: Arc::new(config),
-            db,
-            events: EventBus::new(),
+            tracker: default_tracker(&db),
+            workflow: WorkflowService::new(db.clone(), events.clone()),
+            workspace: WorkspaceService::new(db.clone()),
             event_log: EventLog::new(),
+            db,
+            events,
         })
     }
 
@@ -79,6 +98,13 @@ impl AppState {
     ) -> Result<farm_sdk::services::events::EventHistoryResponse, CoreError> {
         self.event_log.history(&self.db, filter)
     }
+}
+
+/// 默认 Tracker 服务：native adapter（v1 唯一的 provider），启动时无 authored 票。
+///
+/// 票源由宿主管理面（#23）或测试夹具注入：换 provider = 换 adapter，服务与契约不动。
+fn default_tracker(db: &Database) -> TrackerService {
+    TrackerService::new(db.clone(), std::sync::Arc::new(NativeAdapter::empty()))
 }
 
 impl std::fmt::Debug for AppState {

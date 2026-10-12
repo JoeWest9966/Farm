@@ -18,6 +18,10 @@ use crate::handshake::{
     CONTRACT_MAJOR, CONTRACT_PREFIX, CONTRACT_VERSION, HANDSHAKE_PATH, HOST_VERSION,
 };
 use crate::routes::{AdminRouteSpec, RouteSpec, ADMIN_ROUTES, CONTRACT_ROUTES};
+use crate::workflow::{
+    EffectiveSource, LastKnownGoodInfo, ProjectionSwitches, RetryBackoff, WorkflowConfig,
+    WorkflowConfigStatus,
+};
 use crate::services::ServiceName;
 use crate::services::agent_runner::{AbortRequest, AttemptState, DispatchRequest, DispatchResponse, SteerRequest};
 use crate::services::events::{EventHistoryQuery, EventHistoryResponse};
@@ -31,8 +35,14 @@ pub static DOCS_DIR: LazyLock<PathBuf> =
 
 /// 宿主已经真正打通的契约路由（其余全部返回闭集 `not_implemented`）。
 ///
-/// ticket #15 起事件总线的两条投影路由都在此：WS 单连接增量 + 历史快照 API。
-pub const SKELETON_LIVE_ROUTES: &[&str] = &["/v1/events/stream", "/v1/events/history"];
+/// 随各服务票落地而增长：tracker 两条（#13）、workspace 映射（#14）、事件投影两条（#15）。
+pub const SKELETON_LIVE_ROUTES: &[&str] = &[
+    "/v1/tracker/issues",
+    "/v1/tracker/claims",
+    "/v1/workspace/mappings",
+    "/v1/events/stream",
+    "/v1/events/history",
+];
 
 /// 渲染全部契约文档：`文件名 -> 内容`。
 pub fn render_all() -> std::collections::BTreeMap<&'static str, String> {
@@ -92,6 +102,12 @@ fn named_type_schemas() -> Vec<(&'static str, serde_json::Value)> {
         ("PluginSummary", schema_value::<PluginSummary>()),
         ("AdminPluginListResponse", schema_value::<AdminPluginListResponse>()),
         ("AdminStatusResponse", schema_value::<AdminStatusResponse>()),
+        ("WorkflowConfig", schema_value::<WorkflowConfig>()),
+        ("RetryBackoff", schema_value::<RetryBackoff>()),
+        ("ProjectionSwitches", schema_value::<ProjectionSwitches>()),
+        ("EffectiveSource", schema_value::<EffectiveSource>()),
+        ("LastKnownGoodInfo", schema_value::<LastKnownGoodInfo>()),
+        ("WorkflowConfigStatus", schema_value::<WorkflowConfigStatus>()),
     ]
 }
 
@@ -236,7 +252,14 @@ pub fn render_readme_md() -> String {
     md.push_str("| --- | --- | --- | --- | --- |\n");
     for route in CONTRACT_ROUTES {
         let status = if SKELETON_LIVE_ROUTES.contains(&route.path) {
-            "已通：事件总线投影面（WS 增量 + 历史快照）"
+            match route.path {
+                "/v1/events/stream" => "已通：WS 单连接事件投影（#15）",
+                "/v1/events/history" => "已通：事件历史快照 API（#15）",
+                "/v1/tracker/issues" => "已通：归一化 Issue 视图（#13）",
+                "/v1/tracker/claims" => "已通：原子 claim（#13）",
+                "/v1/workspace/mappings" => "已通：workspace 映射视图（#14）",
+                _ => "已通",
+            }
         } else {
             "占位：`not_implemented`"
         };
