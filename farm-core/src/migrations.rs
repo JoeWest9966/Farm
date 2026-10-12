@@ -8,7 +8,7 @@
 //!
 //! 版本分配（集成分支上协调）：#11 = v1 host_meta；#12 workflow LKG = v2；
 //! #13 tracker 票快照/状态历史 = v3；#14 workspace 映射 = v4；#15 事件日志 = v5；
-//! #16 attempts = v6。只准追加、不准改历史版本；合并时按版本升序重排。
+//! #16 attempts = v6；#18 merge 提议 = v7。只准追加、不准改历史版本；合并时按版本升序重排。
 
 use rusqlite::Connection;
 
@@ -147,7 +147,8 @@ fn v5_event_log(conn: &Connection) -> rusqlite::Result<()> {
 
 /// 骨架 migration 集：runner 自己的工作表 + 宿主级 key/value 表 + 各服务域表。
 ///
-/// v3 的 SQL 住 [`crate::tracker::migrations`]（按五服务分域）；v2/v4/v5 为早期内联，保留原样。
+/// v3 的 SQL 住 [`crate::tracker::migrations`]（按五服务分域）；v7 的 SQL 住
+/// [`crate::merge::migrations`]（#18 跟随同一先例）；v2/v4/v5 为早期内联，保留原样。
 pub const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 1,
@@ -178,5 +179,10 @@ pub const MIGRATIONS: &[Migration] = &[
         version: 6,
         name: "agent_runner_attempts",
         up: crate::agent_runner::migrations::v6_agent_runner_attempts,
+    },
+    Migration {
+        version: 7,
+        name: "merge_proposal",
+        up: crate::merge::migrations::v7_merge_proposal,
     },
 ];

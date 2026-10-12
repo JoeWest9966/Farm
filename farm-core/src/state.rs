@@ -14,6 +14,7 @@ use crate::db::Database;
 use crate::error::CoreError;
 use crate::event_log::EventLog;
 use crate::events::EventBus;
+use crate::merge::MergeService;
 use crate::migrations::{Migrator, MIGRATIONS};
 use crate::tracker::{NativeAdapter, TrackerService};
 use crate::workflow::WorkflowService;
@@ -43,6 +44,11 @@ pub struct AppState {
     /// 测试经 [`AppState::with_agent_runner`] 换成 fake pi 替身；生产用默认
     /// （真 `pi` + 无凭据源，#17 之前的状态）。
     pub agent_runner: AgentRunner,
+    /// Merge 服务句柄（#18，加法追加）：agent 只能提议，宿主机械校验后执行真 merge。
+    ///
+    /// 完成信号 = 集成分支上该票的 merge commit。测试经 [`AppState::with_merge`]
+    /// 换成快的测试闸门（生产默认 `cargo test`）。
+    pub merge: MergeService,
 }
 
 impl AppState {
@@ -58,6 +64,7 @@ impl AppState {
             workspace: WorkspaceService::new(db.clone()),
             event_log: EventLog::new(),
             agent_runner: default_agent_runner(&db),
+            merge: MergeService::new(db.clone()),
             db,
             events,
         })
@@ -75,6 +82,7 @@ impl AppState {
             workspace: WorkspaceService::new(db.clone()),
             event_log: EventLog::new(),
             agent_runner: default_agent_runner(&db),
+            merge: MergeService::new(db.clone()),
             db,
             events,
         })
@@ -85,6 +93,18 @@ impl AppState {
     /// 加法构造器：只换一个字段，别的服务句柄不动。
     pub fn with_agent_runner(mut self, agent_runner: AgentRunner) -> Self {
         self.agent_runner = agent_runner;
+        self
+    }
+
+    /// 覆写 merge 句柄（测试换快的测试闸门 / 宿主按被编排仓库配置）。
+    pub fn with_merge(mut self, merge: MergeService) -> Self {
+        self.merge = merge;
+        self
+    }
+
+    /// 覆写 tracker 句柄（测试注入 native 票源 / 宿主换 provider adapter）。
+    pub fn with_tracker(mut self, tracker: TrackerService) -> Self {
+        self.tracker = tracker;
         self
     }
 
