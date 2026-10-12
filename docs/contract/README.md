@@ -37,7 +37,7 @@
 | agent-runner | POST | `/v1/agent-runner/attempts/{attempt_id}/steer` | 向运行中的 attempt 注入指令 | 占位：`not_implemented` |
 | agent-runner | POST | `/v1/agent-runner/attempts/{attempt_id}/abort` | 中止 attempt（abort 探针） | 占位：`not_implemented` |
 | merge | POST | `/v1/merge/proposals` | agent 提议 merge（宿主校验后执行） | 占位：`not_implemented` |
-| workspace | GET | `/v1/workspace/mappings` | spec ↔ 集成分支 ↔ worktrees 映射 | 占位：`not_implemented` |
+| workspace | GET | `/v1/workspace/mappings` | spec ↔ 集成分支 ↔ worktrees 映射 | 骨架已通 |
 | events | GET | `/v1/events/stream` | WS 单连接订阅事件总线（握手同样验 token） | 骨架已通（WS 验 token + 事件流） |
 | events | GET | `/v1/events/history` | 事件历史查询（有界保留窗口） | 占位：`not_implemented` |
 
@@ -50,6 +50,7 @@
 | --- | --- | --- | --- |
 | GET | `/admin/plugins` | 插件清单与状态（装卸能力占位） | 占位：`not_implemented` |
 | GET | `/admin/status` | 宿主管理面自描述（契约版本 + 五服务） | 占位：`not_implemented` |
+| GET | `/admin/workflow/config/{repo_id}` | 查询某被编排仓库当前生效的 workflow 配置与 LKG 状态（ticket #12） | 占位：`not_implemented` |
 
 ## 闭集错误码（closed-set error codes）
 

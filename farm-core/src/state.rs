@@ -1,9 +1,9 @@
 //! 共享运行时状态（`AppState`）：farm-host 与五服务共同的底座。
 //!
-//! 本票（#11）只含底座：`config` + 宿主私有存储 `db` + 内存事件总线 `events`。
-//! 服务域状态（tracker/agent-runner/merge/workspace 的句柄）由 #13–#18 **加法追加**，
-//! 不改这里的历史形状。SQLite schema 永不外泄为契约（ADR-0005 §5）：面板与插件
-//! 都不直连 DB，一切读走契约 API / 宿主投影 API。
+//! 底座（#11）：`config` + 宿主私有存储 `db` + 内存事件总线 `events`。
+//! 服务域状态（tracker/agent-runner/merge/workspace/workflow 的句柄）由各服务票
+//! **加法追加**，不改这里的历史形状。SQLite schema 永不外泄为契约（ADR-0005 §5）：
+//! 面板与插件都不直连 DB，一切读走契约 API / 宿主投影 API。
 
 use std::sync::Arc;
 
@@ -13,6 +13,8 @@ use crate::error::CoreError;
 use crate::events::EventBus;
 use crate::migrations::{Migrator, MIGRATIONS};
 use crate::tracker::{NativeAdapter, TrackerService};
+use crate::workflow::WorkflowService;
+use crate::workspace::WorkspaceService;
 
 /// 宿主共享状态。`Clone` 廉价（内部 `Arc`/`Clone`），可被 axum handler 广泛共享。
 #[derive(Clone)]
@@ -24,6 +26,10 @@ pub struct AppState {
     ///
     /// 面板与编排器都经契约路由打到这同一个句柄——tracker 是总线。
     pub tracker: TrackerService,
+    /// Workflow 配置装载 + last-known-good（ticket #12；查询 API 的数据源）。
+    pub workflow: WorkflowService,
+    /// Workspace 服务句柄（#14，加法追加）：持有 spec↔集成分支↔worktree 映射。
+    pub workspace: WorkspaceService,
 }
 
 impl AppState {
@@ -31,12 +37,14 @@ impl AppState {
     pub fn new(config: HostConfig) -> Result<Self, CoreError> {
         let db = Database::open(&config.db_path)?;
         db.migrate(&Migrator::new(MIGRATIONS))?;
-        let tracker = default_tracker(&db);
+        let events = EventBus::new();
         Ok(Self {
             config: Arc::new(config),
+            tracker: default_tracker(&db),
+            workflow: WorkflowService::new(db.clone(), events.clone()),
+            workspace: WorkspaceService::new(db.clone()),
             db,
-            events: EventBus::new(),
-            tracker,
+            events,
         })
     }
 
@@ -44,12 +52,14 @@ impl AppState {
     pub fn new_in_memory(config: HostConfig) -> Result<Self, CoreError> {
         let db = Database::open_in_memory()?;
         db.migrate(&Migrator::new(MIGRATIONS))?;
-        let tracker = default_tracker(&db);
+        let events = EventBus::new();
         Ok(Self {
             config: Arc::new(config),
+            tracker: default_tracker(&db),
+            workflow: WorkflowService::new(db.clone(), events.clone()),
+            workspace: WorkspaceService::new(db.clone()),
             db,
-            events: EventBus::new(),
-            tracker,
+            events,
         })
     }
 }

@@ -18,6 +18,10 @@ use crate::handshake::{
     CONTRACT_MAJOR, CONTRACT_PREFIX, CONTRACT_VERSION, HANDSHAKE_PATH, HOST_VERSION,
 };
 use crate::routes::{AdminRouteSpec, RouteSpec, ADMIN_ROUTES, CONTRACT_ROUTES};
+use crate::workflow::{
+    EffectiveSource, LastKnownGoodInfo, ProjectionSwitches, RetryBackoff, WorkflowConfig,
+    WorkflowConfigStatus,
+};
 use crate::services::ServiceName;
 use crate::services::agent_runner::{AbortRequest, AttemptState, DispatchRequest, DispatchResponse, SteerRequest};
 use crate::services::events::{EventHistoryQuery, EventHistoryResponse};
@@ -30,7 +34,9 @@ pub static DOCS_DIR: LazyLock<PathBuf> =
     LazyLock::new(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/contract"));
 
 /// 本票骨架里已经真正打通的契约路由（其余全部返回闭集 `not_implemented`）。
-pub const SKELETON_LIVE_ROUTES: &[&str] = &["/v1/events/stream"];
+///
+/// `/v1/events/stream`（#11 WS）、`/v1/workspace/mappings`（#14 workspace 映射视图）。
+pub const SKELETON_LIVE_ROUTES: &[&str] = &["/v1/events/stream", "/v1/workspace/mappings"];
 
 /// 渲染全部契约文档：`文件名 -> 内容`。
 pub fn render_all() -> std::collections::BTreeMap<&'static str, String> {
@@ -90,6 +96,12 @@ fn named_type_schemas() -> Vec<(&'static str, serde_json::Value)> {
         ("PluginSummary", schema_value::<PluginSummary>()),
         ("AdminPluginListResponse", schema_value::<AdminPluginListResponse>()),
         ("AdminStatusResponse", schema_value::<AdminStatusResponse>()),
+        ("WorkflowConfig", schema_value::<WorkflowConfig>()),
+        ("RetryBackoff", schema_value::<RetryBackoff>()),
+        ("ProjectionSwitches", schema_value::<ProjectionSwitches>()),
+        ("EffectiveSource", schema_value::<EffectiveSource>()),
+        ("LastKnownGoodInfo", schema_value::<LastKnownGoodInfo>()),
+        ("WorkflowConfigStatus", schema_value::<WorkflowConfigStatus>()),
     ]
 }
 
@@ -234,7 +246,11 @@ pub fn render_readme_md() -> String {
     md.push_str("| --- | --- | --- | --- | --- |\n");
     for route in CONTRACT_ROUTES {
         let status = if SKELETON_LIVE_ROUTES.contains(&route.path) {
-            "骨架已通（WS 验 token + 事件流）"
+            if route.path == "/v1/events/stream" {
+                "骨架已通（WS 验 token + 事件流）"
+            } else {
+                "骨架已通"
+            }
         } else {
             "占位：`not_implemented`"
         };

@@ -28,6 +28,14 @@ impl From<TrackerError> for ApiError {
     }
 }
 
+/// 宿主内部错误投影到闭集信封（`CoreError::to_contract_error`：只有
+/// `internal` / `service_unavailable` 两种形状对客户端可见）。
+impl From<farm_core::CoreError> for ApiError {
+    fn from(err: farm_core::CoreError) -> Self {
+        Self(err.to_contract_error())
+    }
+}
+
 impl From<ApiError> for ContractError {
     fn from(err: ApiError) -> Self {
         err.0

@@ -6,11 +6,13 @@
 use axum::body::Body;
 use axum::http::{header, Method, Request, StatusCode};
 use axum::Router;
+use farm_core::workspace::EstablishRequest;
 use farm_host::build_router;
 use farm_sdk::{
     ClientInfo, ClientKind, ContractError, ErrorCode, HandshakeRequest, HandshakeResponse,
     CONTRACT_ROUTES, CONTRACT_VERSION, HANDSHAKE_PATH,
 };
+use farm_sdk::services::workspace::{MappingListResponse, WorktreeState};
 use tower::ServiceExt;
 
 mod common;
@@ -376,9 +378,61 @@ async fn the_router_is_reusable_across_requests() {
     for _ in 0..3 {
         let response = app
             .clone()
-            .oneshot(request(Method::GET, "/v1/workspace/mappings", Some(OP_TOKEN)))
+            .oneshot(request(Method::POST, "/v1/merge/proposals", Some(OP_TOKEN)))
             .await
             .expect("oneshot");
         assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Workspace 服务（ticket #14）：GET /v1/workspace/mappings 返回映射视图
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn the_workspace_mappings_route_returns_an_empty_view_when_nothing_is_mapped() {
+    let app = app();
+    let response = app
+        .oneshot(request(Method::GET, "/v1/workspace/mappings", Some(OP_TOKEN)))
+        .await
+        .expect("oneshot");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: MappingListResponse = body_json(response).await;
+    assert!(body.mappings.is_empty(), "无映射时返回空清单");
+}
+
+#[tokio::test]
+async fn the_workspace_mappings_route_projects_the_persisted_mapping_view() {
+    let mut state = common::state();
+    // 经 Workspace 服务 write-ahead 落一条 pending 映射（投影为 Creating）。
+    state
+        .workspace
+        .reserve(&EstablishRequest {
+            spec_id: "spec-10".into(),
+            integration_branch: "implement/spec-10".into(),
+            ticket_id: "14".into(),
+            repo_path: "/repo".into(),
+            worktree_path: "/wt/t14".into(),
+            worktree_branch: "farm/t14".into(),
+            start_point: None,
+        })
+        .expect("reserve seeds the host-private store");
+    let app = build_router(state);
+
+    let response = app
+        .oneshot(request(Method::GET, "/v1/workspace/mappings", Some(OP_TOKEN)))
+        .await
+        .expect("oneshot");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: MappingListResponse = body_json(response).await;
+    assert_eq!(body.mappings.len(), 1);
+    assert_eq!(body.mappings[0].spec_id, "spec-10");
+    assert_eq!(body.mappings[0].integration_branch, "implement/spec-10");
+    assert_eq!(body.mappings[0].worktrees.len(), 1);
+    let wt = &body.mappings[0].worktrees[0];
+    assert_eq!(wt.ticket_id, "14");
+    assert_eq!(wt.branch, "farm/t14");
+    assert_eq!(wt.state, WorktreeState::Creating, "pending 投影为 Creating");
 }

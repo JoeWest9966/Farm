@@ -19,6 +19,7 @@ pub mod events;
 pub mod handshake;
 pub mod routes;
 pub mod services;
+pub mod workflow;
 
 pub use error::{ContractError, ErrorCode};
 pub use events::{EventEnvelope, EventKind, NewEvent, WsHello};
@@ -28,6 +29,10 @@ pub use handshake::{
 };
 pub use routes::{contract_path, AdminRouteSpec, RouteSpec, ADMIN_ROUTES, CONTRACT_ROUTES};
 pub use services::ServiceName;
+pub use workflow::{
+    EffectiveSource, LastKnownGoodInfo, ProjectionSwitches, RetryBackoff, WorkflowConfig,
+    WorkflowConfigStatus,
+};
 
 /// farm-sdk 的 crate 版本（与契约版本分离）。
 pub const SDK_VERSION: &str = env!("CARGO_PKG_VERSION");
