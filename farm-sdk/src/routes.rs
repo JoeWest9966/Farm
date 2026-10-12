@@ -93,6 +93,12 @@ pub const CONTRACT_ROUTES: &[RouteSpec] = &[
         path: "/v1/workspace/mappings",
         summary: "spec ↔ 集成分支 ↔ worktrees 映射",
     },
+    RouteSpec {
+        service: ServiceName::Workspace,
+        method: "POST",
+        path: "/v1/workspace/worktrees",
+        summary: "建立 ticket worktree（write-ahead 映射 + git worktree add；#26 契约客户端整链接通）",
+    },
     // --- 事件总线 ---
     RouteSpec {
         service: ServiceName::Events,

@@ -50,6 +50,8 @@ const TRACKER_CLAIMS_PATH: &str = "/v1/tracker/claims";
 
 /// Workspace 服务映射视图（ticket #14 打通）：`GET /v1/workspace/mappings`。
 const WORKSPACE_MAPPINGS_PATH: &str = "/v1/workspace/mappings";
+/// Workspace 服务建立 worktree（ticket #26 加法接通）：`POST /v1/workspace/worktrees`。
+const WORKSPACE_WORKTREES_PATH: &str = "/v1/workspace/worktrees";
 
 /// Agent-Runner 三条路由（ticket #16 打通）：派发 + steer/abort 注入。
 /// #22 追加 follow-up / clear-queue 两条注入路由（面板 HITL：改道、放弃改道）。
@@ -82,6 +84,7 @@ pub fn build_router(state: AppState) -> Router {
             TRACKER_CLAIMS_PATH => post(contract::tracker_claims),
             TRACKER_RELEASE_PATH => post(contract::tracker_release),
             WORKSPACE_MAPPINGS_PATH => get(workspace::list_mappings),
+            WORKSPACE_WORKTREES_PATH => post(workspace::establish_worktree),
             AGENT_DISPATCH_PATH => post(agent_runner::dispatch),
             AGENT_STEER_PATH => post(agent_runner::steer),
             AGENT_ABORT_PATH => post(agent_runner::abort),

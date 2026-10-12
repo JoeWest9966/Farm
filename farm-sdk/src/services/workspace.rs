@@ -41,3 +41,27 @@ pub struct WorkspaceMapping {
 pub struct MappingListResponse {
     pub mappings: Vec<WorkspaceMapping>,
 }
+
+/// 建立 ticket worktree 的请求（`POST /v1/workspace/worktrees`，ticket #26 加法接通）。
+///
+/// GLOSSARY「Workspace 服务」负责 worktree 的创建；编排器以契约客户端身份触发它
+/// （write-ahead 映射先落、`git worktree add` 后建）。路径用字符串（契约面只过 JSON），
+/// 由宿主翻译成内部 `EstablishRequest`。这是**加法**契约面：既有的 `GET /v1/workspace/mappings`
+/// 只读投影不变，本条只补「编排器可委托建 worktree」这一个原语——没有它，契约客户端
+/// 无法驱动整链（claim 之后、dispatch 之前无处建 worktree）。
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WorktreeEstablishRequest {
+    pub spec_id: String,
+    pub integration_branch: String,
+    pub ticket_id: String,
+    /// 源仓库路径（`git worktree add -C` 的目标）。
+    pub repo_path: String,
+    /// 要建的 worktree 目录路径。
+    pub worktree_path: String,
+    /// worktree 分支名（不存在则从 `start_point` 新建）。
+    pub worktree_branch: String,
+    /// 建分支的起点（commit/branch）；缺省基于 HEAD。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_point: Option<String>,
+}
