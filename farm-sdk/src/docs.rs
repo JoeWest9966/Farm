@@ -23,10 +23,15 @@ use crate::workflow::{
     WorkflowConfigStatus,
 };
 use crate::services::ServiceName;
-use crate::services::agent_runner::{AbortRequest, AttemptState, DispatchRequest, DispatchResponse, SteerRequest};
+use crate::services::agent_runner::{
+    AbortRequest, AttemptState, ClearQueueResponse, DispatchRequest, DispatchResponse, SteerRequest,
+};
 use crate::services::events::{EventHistoryQuery, EventHistoryResponse};
 use crate::services::merge::{MergeProposal, MergeProposalResponse, MergeProposalState};
-use crate::services::tracker::{ClaimRequest, ClaimResponse, IssueListResponse, IssueState, IssueView};
+use crate::services::tracker::{
+    ClaimRequest, ClaimResponse, IssueListResponse, IssueState, IssueView, ReleaseOutcome,
+    ReleaseRequest, ReleaseResponse,
+};
 use crate::services::workspace::{MappingListResponse, WorktreeRef, WorktreeState, WorkspaceMapping};
 
 /// 生成物目录（相对 workspace 根）。`farm-sdk` 的 manifest dir 是 `<root>/farm-sdk`。
@@ -39,9 +44,15 @@ pub static DOCS_DIR: LazyLock<PathBuf> =
 pub const SKELETON_LIVE_ROUTES: &[&str] = &[
     "/v1/tracker/issues",
     "/v1/tracker/claims",
+    "/v1/tracker/releases",
     "/v1/workspace/mappings",
     "/v1/events/stream",
     "/v1/events/history",
+    "/v1/agent-runner/dispatches",
+    "/v1/agent-runner/attempts/{attempt_id}/steer",
+    "/v1/agent-runner/attempts/{attempt_id}/abort",
+    "/v1/agent-runner/attempts/{attempt_id}/follow-up",
+    "/v1/agent-runner/attempts/{attempt_id}/clear-queue",
 ];
 
 /// 渲染全部契约文档：`文件名 -> 内容`。
@@ -84,6 +95,10 @@ fn named_type_schemas() -> Vec<(&'static str, serde_json::Value)> {
         ("IssueListResponse", schema_value::<IssueListResponse>()),
         ("ClaimRequest", schema_value::<ClaimRequest>()),
         ("ClaimResponse", schema_value::<ClaimResponse>()),
+        ("ReleaseRequest", schema_value::<ReleaseRequest>()),
+        ("ReleaseResponse", schema_value::<ReleaseResponse>()),
+        ("ReleaseOutcome", schema_value::<ReleaseOutcome>()),
+        ("ClearQueueResponse", schema_value::<ClearQueueResponse>()),
         ("AttemptState", schema_value::<AttemptState>()),
         ("DispatchRequest", schema_value::<DispatchRequest>()),
         ("DispatchResponse", schema_value::<DispatchResponse>()),
@@ -258,6 +273,12 @@ pub fn render_readme_md() -> String {
                 "/v1/tracker/issues" => "已通：归一化 Issue 视图（#13）",
                 "/v1/tracker/claims" => "已通：原子 claim（#13）",
                 "/v1/workspace/mappings" => "已通：workspace 映射视图（#14）",
+                "/v1/agent-runner/dispatches" => "已通：派发 attempt（#16）",
+                "/v1/agent-runner/attempts/{attempt_id}/steer" => "已通：steer 注入（#16）",
+                "/v1/agent-runner/attempts/{attempt_id}/abort" => "已通：abort 探针（#16）",
+                "/v1/agent-runner/attempts/{attempt_id}/follow-up" => "已通：follow_up 注入（#22）",
+                "/v1/agent-runner/attempts/{attempt_id}/clear-queue" => "已通：clear_queue（#22）",
+                "/v1/tracker/releases" => "已通：release 交还排他所有权（#22）",
                 _ => "已通",
             }
         } else {

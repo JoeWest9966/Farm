@@ -8,6 +8,8 @@
 //! 面板作为**契约客户端**的真实调用（读看板、HITL、dispatch、审阅流）归 #22/#24/#25；
 //! 本票不发任何请求——op token 也不落盘，由使用者在页面输入。
 
+pub mod core;
+
 use farm_sdk::{EventKind, ServiceName, CONTRACT_VERSION, SDK_VERSION};
 
 /// 占位页标题。宿主 embed 的 `index.html` 与面板自身渲染同一份自描述。

@@ -134,6 +134,18 @@ pub struct SteerResponse {
     pub disposition: Option<Disposition>,
 }
 
+/// `clear_queue` 的受理结果：清掉挂在 attempt 上的待注入（steering / followUp /
+/// 被推迟的注入），回报清了几条。
+///
+/// attempt 不在跑 → 闭集 `conflict`（attempt 已收尾，没什么可清）；attempt 不存在
+/// → 闭集 `not_found`。面板的 HITL 输入框旁边用它丢弃排队中的注入。
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ClearQueueResponse {
+    pub attempt_id: String,
+    pub cleared: u64,
+}
+
 /// abort 的受理结果：attempt 现状（abort 探针可能仍在跑，故只是「已受理」）。
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
