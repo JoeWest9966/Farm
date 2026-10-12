@@ -26,6 +26,7 @@ use crate::overlay::{
     OverlayClearRequest, OverlayClearResponse, OverlayEntry, OverlayKey, OverlaySetRequest,
     OverlayStatus, OverlayValueKind,
 };
+use crate::notifier::{NotificationChannelConfig, NotificationChannelUpdate, NotifierFilter};
 use crate::routes::{AdminRouteSpec, RouteSpec, ADMIN_ROUTES, CONTRACT_ROUTES};
 use crate::workflow::{
     EffectiveSource, LastKnownGoodInfo, ProjectionSwitches, RetryBackoff, WorkflowConfig,
@@ -147,6 +148,9 @@ fn named_type_schemas() -> Vec<(&'static str, serde_json::Value)> {
         ("TickState", schema_value::<TickState>()),
         ("TickControlStatus", schema_value::<TickControlStatus>()),
         ("TickControlRequest", schema_value::<TickControlRequest>()),
+        ("NotifierFilter", schema_value::<NotifierFilter>()),
+        ("NotificationChannelConfig", schema_value::<NotificationChannelConfig>()),
+        ("NotificationChannelUpdate", schema_value::<NotificationChannelUpdate>()),
     ]
 }
 
@@ -270,6 +274,7 @@ fn admin_route_status(route: &AdminRouteSpec) -> &'static str {
         "/admin/services" => "已通：五服务启停状态（#23）",
         "/admin/services/{name}/stop" => "已通：停机一个服务（#23）",
         "/admin/services/{name}/start" => "已通：启动一个服务（#23）",
+        "/admin/notifier/channel/{repo_id}" => "已通：通知通道配置 view/set（#21，宿主零推送域知识）",
         _ => "占位：`not_implemented`",
     }
 }
