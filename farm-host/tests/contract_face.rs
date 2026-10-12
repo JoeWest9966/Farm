@@ -246,7 +246,8 @@ async fn an_empty_token_header_is_unauthorized() {
 #[tokio::test]
 async fn every_placeholder_contract_route_answers_not_implemented_with_the_op_token() {
     for route in CONTRACT_ROUTES {
-        // 已打通的路由不再是占位：事件投影两条（#15）、tracker 两条（#13）、workspace 映射（#14）。
+        // 已打通的路由不再是占位：事件投影两条（#15）、tracker 两条（#13）、
+        // workspace 映射（#14）、agent-runner 三条（#16）。
         if matches!(
             route.path,
             "/v1/events/stream"
@@ -254,6 +255,9 @@ async fn every_placeholder_contract_route_answers_not_implemented_with_the_op_to
                 | "/v1/tracker/issues"
                 | "/v1/tracker/claims"
                 | "/v1/workspace/mappings"
+                | "/v1/agent-runner/dispatches"
+                | "/v1/agent-runner/attempts/{attempt_id}/steer"
+                | "/v1/agent-runner/attempts/{attempt_id}/abort"
         ) {
             continue;
         }

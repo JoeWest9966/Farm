@@ -8,6 +8,7 @@
 
 use std::sync::Arc;
 
+use crate::agent_runner::AgentRunner;
 use crate::config::HostConfig;
 use crate::db::Database;
 use crate::error::CoreError;
@@ -37,6 +38,11 @@ pub struct AppState {
     pub workflow: WorkflowService,
     /// Workspace 服务句柄（#14，加法追加）：持有 spec↔集成分支↔worktree 映射。
     pub workspace: WorkspaceService,
+    /// Agent-Runner 服务句柄（#16，加法追加）：本地后端（spawn pi --mode rpc）+ 判据阶梯。
+    ///
+    /// 测试经 [`AppState::with_agent_runner`] 换成 fake pi 替身；生产用默认
+    /// （真 `pi` + 无凭据源，#17 之前的状态）。
+    pub agent_runner: AgentRunner,
 }
 
 impl AppState {
@@ -51,6 +57,7 @@ impl AppState {
             workflow: WorkflowService::new(db.clone(), events.clone()),
             workspace: WorkspaceService::new(db.clone()),
             event_log: EventLog::new(),
+            agent_runner: default_agent_runner(&db),
             db,
             events,
         })
@@ -67,9 +74,18 @@ impl AppState {
             workflow: WorkflowService::new(db.clone(), events.clone()),
             workspace: WorkspaceService::new(db.clone()),
             event_log: EventLog::new(),
+            agent_runner: default_agent_runner(&db),
             db,
             events,
         })
+    }
+
+    /// 覆写 agent-runner 句柄（测试注入 fake pi 替身 / 生产换 program 与凭据源）。
+    ///
+    /// 加法构造器：只换一个字段，别的服务句柄不动。
+    pub fn with_agent_runner(mut self, agent_runner: AgentRunner) -> Self {
+        self.agent_runner = agent_runner;
+        self
     }
 
     /// 发布一条事件（ticket #15）：宿主盖章 → 写事件日志 → 广播到内存总线。
@@ -98,6 +114,11 @@ impl AppState {
     ) -> Result<farm_sdk::services::events::EventHistoryResponse, CoreError> {
         self.event_log.history(&self.db, filter)
     }
+}
+
+/// 默认 Agent-Runner：本地后端跑真 `pi`，无凭据源（#17 之前的状态）。
+fn default_agent_runner(db: &Database) -> AgentRunner {
+    AgentRunner::new(db.clone())
 }
 
 /// 默认 Tracker 服务：native adapter（v1 唯一的 provider），启动时无 authored 票。

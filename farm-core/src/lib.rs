@@ -6,6 +6,7 @@
 //! 本票（#11）只搭骨架：五服务的**实现**归 #13–#18，事件总线的服务面归 #15；
 //! 这里提供它们共同的底座。事件总线的持久面在 [`event_log`]（ticket #15）。
 
+pub mod agent_runner;
 pub mod config;
 pub mod db;
 pub mod error;
