@@ -116,7 +116,7 @@ HTTP 响应体与 WS 文本帧共用同一信封：
 | `claim_acquired` | 否 | 否 | 原子 claim 成功 |
 | `plugin_quarantined` | 否 | 否 | 插件重试耗尽进入隔离 |
 | `plugin_restarted` | 否 | 是 | 插件崩溃后分级退避重启（进 Kron escalation） |
-| `notification_sent` | 否 | 否 | 通知通道外发完成 |
+| `notification_sent` | 否 | 否 | 通知通道外发完成（保留：外发由宿主外的通知插件做，宿主零推送） |
 
 ## Schema
 

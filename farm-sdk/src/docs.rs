@@ -446,7 +446,9 @@ fn event_meaning(kind: EventKind) -> &'static str {
         EventKind::ClaimAcquired => "原子 claim 成功",
         EventKind::PluginQuarantined => "插件重试耗尽进入隔离",
         EventKind::PluginRestarted => "插件崩溃后分级退避重启（进 Kron escalation）",
-        EventKind::NotificationSent => "通知通道外发完成",
+        EventKind::NotificationSent => {
+            "通知通道外发完成（保留：外发由宿主外的通知插件做，宿主零推送）"
+        }
     }
 }
 
