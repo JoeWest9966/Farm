@@ -45,7 +45,7 @@ use crate::services::tracker::{
     ClaimRequest, ClaimResponse, IssueListResponse, IssueState, IssueView, ReleaseOutcome,
     ReleaseRequest, ReleaseResponse,
 };
-use crate::services::workspace::{MappingListResponse, WorktreeRef, WorktreeState, WorkspaceMapping};
+use crate::services::workspace::{MappingListResponse, WorktreeEstablishRequest, WorktreeRef, WorktreeState, WorkspaceMapping};
 
 /// 生成物目录（相对 workspace 根）。`farm-sdk` 的 manifest dir 是 `<root>/farm-sdk`。
 pub static DOCS_DIR: LazyLock<PathBuf> =
@@ -59,6 +59,7 @@ pub const SKELETON_LIVE_ROUTES: &[&str] = &[
     "/v1/tracker/claims",
     "/v1/tracker/releases",
     "/v1/workspace/mappings",
+    "/v1/workspace/worktrees",
     "/v1/events/stream",
     "/v1/events/history",
     "/v1/agent-runner/dispatches",
@@ -128,6 +129,7 @@ fn named_type_schemas() -> Vec<(&'static str, serde_json::Value)> {
         ("WorktreeRef", schema_value::<WorktreeRef>()),
         ("WorkspaceMapping", schema_value::<WorkspaceMapping>()),
         ("MappingListResponse", schema_value::<MappingListResponse>()),
+        ("WorktreeEstablishRequest", schema_value::<WorktreeEstablishRequest>()),
         ("EventHistoryQuery", schema_value::<EventHistoryQuery>()),
         ("EventHistoryResponse", schema_value::<EventHistoryResponse>()),
         ("PluginState", schema_value::<PluginState>()),
@@ -324,6 +326,7 @@ pub fn render_readme_md() -> String {
                 "/v1/tracker/issues" => "已通：归一化 Issue 视图（#13）",
                 "/v1/tracker/claims" => "已通：原子 claim（#13）",
                 "/v1/workspace/mappings" => "已通：workspace 映射视图（#14）",
+                "/v1/workspace/worktrees" => "已通：契约客户端建 worktree（#26）",
                 "/v1/agent-runner/dispatches" => "已通：派发 attempt（#16）",
                 "/v1/agent-runner/attempts/{attempt_id}/steer" => "已通：steer 注入（#16）",
                 "/v1/agent-runner/attempts/{attempt_id}/abort" => "已通：abort 探针（#16）",

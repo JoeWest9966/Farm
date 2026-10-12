@@ -1768,6 +1768,50 @@
       "title": "WorkspaceMapping",
       "type": "object"
     },
+    "WorktreeEstablishRequest": {
+      "additionalProperties": false,
+      "description": "建立 ticket worktree 的请求（`POST /v1/workspace/worktrees`，ticket #26 加法接通）。\n\nGLOSSARY「Workspace 服务」负责 worktree 的创建；编排器以契约客户端身份触发它\n（write-ahead 映射先落、`git worktree add` 后建）。路径用字符串（契约面只过 JSON），\n由宿主翻译成内部 `EstablishRequest`。这是**加法**契约面：既有的 `GET /v1/workspace/mappings`\n只读投影不变，本条只补「编排器可委托建 worktree」这一个原语——没有它，契约客户端\n无法驱动整链（claim 之后、dispatch 之前无处建 worktree）。",
+      "properties": {
+        "integration_branch": {
+          "type": "string"
+        },
+        "repo_path": {
+          "description": "源仓库路径（`git worktree add -C` 的目标）。",
+          "type": "string"
+        },
+        "spec_id": {
+          "type": "string"
+        },
+        "start_point": {
+          "description": "建分支的起点（commit/branch）；缺省基于 HEAD。",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ticket_id": {
+          "type": "string"
+        },
+        "worktree_branch": {
+          "description": "worktree 分支名（不存在则从 `start_point` 新建）。",
+          "type": "string"
+        },
+        "worktree_path": {
+          "description": "要建的 worktree 目录路径。",
+          "type": "string"
+        }
+      },
+      "required": [
+        "spec_id",
+        "integration_branch",
+        "ticket_id",
+        "repo_path",
+        "worktree_path",
+        "worktree_branch"
+      ],
+      "title": "WorktreeEstablishRequest",
+      "type": "object"
+    },
     "WorktreeRef": {
       "additionalProperties": false,
       "description": "worktree 引用。",

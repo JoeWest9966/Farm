@@ -42,6 +42,9 @@ pub use services::agent_runner::{
     AbortRequest, AbortResponse, AttemptState, ClearQueueResponse, DispatchRequest, DispatchResponse,
     Disposition, SteerRequest, SteerResponse,
 };
+pub use services::workspace::{
+    MappingListResponse, WorktreeEstablishRequest, WorktreeRef, WorktreeState, WorkspaceMapping,
+};
 pub use workflow::{
     EffectiveSource, LastKnownGoodInfo, ProjectionSwitches, RetryBackoff, WorkflowConfig,
     WorkflowConfigStatus,

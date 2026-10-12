@@ -18,3 +18,10 @@ path = "src/main.rs"
 farm-sdk = { path = "../../farm-sdk" }
 tokio = { version = "1", features = ["rt", "macros", "net", "time", "io-util"] }
 serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+tempfile = "3"
+# WS 事件面用最少机器（手写 upgrade + 帧解析，见 client::ws_hello），不引 WS 库。
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "net", "time", "io-util"] }
+tempfile = "3"
