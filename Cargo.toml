@@ -50,3 +50,8 @@ opt-level = "z"
 lto = true
 codegen-units = 1
 strip = true
+
+# cargo-dist 的发布 profile（ticket #11）：cargo-dist 0.28 默认按 `dist` profile 构建
+# 发布产物；缺此段连 `dist build` 都起不来（原交付缺，从未真正构建过）。
+[profile.dist]
+inherits = "release"
