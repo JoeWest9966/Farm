@@ -23,6 +23,7 @@ pub mod contract;
 pub mod error;
 pub mod events;
 pub mod events_ws;
+pub mod merge;
 pub mod panel;
 pub mod workspace;
 pub mod workflow;
@@ -58,6 +59,9 @@ const AGENT_CLEAR_QUEUE_PATH: &str = "/v1/agent-runner/attempts/{attempt_id}/cle
 /// Tracker 的 release 路由（ticket #22 打通）：交还排他所有权。
 const TRACKER_RELEASE_PATH: &str = "/v1/tracker/releases";
 
+/// Merge 服务提议路由（ticket #18 打通）：`POST /v1/merge/proposals`。
+const MERGE_PROPOSALS_PATH: &str = "/v1/merge/proposals";
+
 /// 装配宿主路由：三个面 + 统一的闭集 404/405 兜底。
 ///
 /// 路由表是单一源（`farm-sdk::routes`）：宿主按表挂载，所以表里新增一条路由
@@ -78,6 +82,7 @@ pub fn build_router(state: AppState) -> Router {
             AGENT_ABORT_PATH => post(agent_runner::abort),
             AGENT_FOLLOW_UP_PATH => post(agent_runner::follow_up),
             AGENT_CLEAR_QUEUE_PATH => post(agent_runner::clear_queue),
+            MERGE_PROPOSALS_PATH => post(merge::propose),
             _ => match route.method {
                 "GET" => get(contract::not_implemented_placeholder),
                 "POST" => post(contract::not_implemented_placeholder),

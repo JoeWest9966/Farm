@@ -15,6 +15,19 @@ pub enum MergeProposalState {
     Rejected,
 }
 
+impl MergeProposalState {
+    /// 闭集的权威清单。
+    ///
+    /// 宿主私有存储的 `CHECK` 约束由它**生成**（与 `EventKind::ALL` 同款纪律，
+    /// ADR-0001 决策 6）：闭集的单一源仍在 farm-sdk，SQL 只是第二道闸。
+    pub const ALL: [MergeProposalState; 4] = [
+        MergeProposalState::Proposed,
+        MergeProposalState::Validated,
+        MergeProposalState::Merged,
+        MergeProposalState::Rejected,
+    ];
+}
+
 /// agent 的 merge 提议（提议即全部；执行归宿主）。
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

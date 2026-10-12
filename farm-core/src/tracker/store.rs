@@ -134,8 +134,10 @@ impl TrackerStore {
                     Some(row) => {
                         // claim 是 Farm 侧的排他声明：provider 不报 assignee 时**不清**它，
                         // 否则一次 sync 就把双跑防护悄悄抹掉。
+                        // 同理，**已关的票不被降级**：`done` 是不可逆事实（#18 的关票投影
+                        // 尤其依赖这一点——provider 侧的 open 回报不该把完成信号抹掉）。
                         let assignee = issue.assignee.clone().or_else(|| row.assignee.clone());
-                        let state = if issue.state == IssueState::Done {
+                        let state = if row.state == IssueState::Done || issue.state == IssueState::Done {
                             IssueState::Done
                         } else if assignee.is_some() {
                             IssueState::Claimed
@@ -220,6 +222,36 @@ impl TrackerStore {
                 "claim: exclusive ownership acquired (CAS)",
             )?;
             Ok(ClaimOutcome::Acquired)
+        })
+    }
+
+    /// **关票投影**（#18 merge 服务的投影目标）：把归一化票标成 `done`。
+    ///
+    /// `done` 不可逆：已关的票再关是幂等空操作（不造新历史）。票不存在 → `false`。
+    /// 只在状态真的变时才记一条历史（note 点名完成信号来自 merge commit）。
+    pub fn close_issue(&self, issue_id: &str, actor: &str, at: &str) -> Result<bool, CoreError> {
+        self.db.with_conn(|conn| {
+            let Some(row) = select_issue_row(conn, issue_id)? else {
+                return Ok(false);
+            };
+            if row.state == IssueState::Done {
+                return Ok(true); // 幂等：关闭是不可逆事实
+            }
+            conn.execute(
+                "UPDATE tracker_issues SET state = ?2, updated_at = ?3 WHERE issue_id = ?1",
+                rusqlite::params![issue_id, state_to_str(IssueState::Done), at],
+            )?;
+            record_transition(
+                conn,
+                issue_id,
+                Some(row.state),
+                IssueState::Done,
+                row.assignee.as_deref(),
+                actor,
+                at,
+                "merge projection: completion signal observed (merge commit on the integration branch)",
+            )?;
+            Ok(true)
         })
     }
 

@@ -216,8 +216,8 @@ async fn the_bearer_authorization_header_is_accepted_as_the_op_token() {
     let response = app
         .oneshot(
             Request::builder()
-                .method(Method::POST)
-                .uri("/v1/merge/proposals")
+                .method(Method::GET)
+                .uri("/v1/tracker/issues")
                 .header(header::AUTHORIZATION, format!("Bearer {OP_TOKEN}"))
                 .body(Body::empty())
                 .expect("request"),
@@ -225,8 +225,8 @@ async fn the_bearer_authorization_header_is_accepted_as_the_op_token() {
         .await
         .expect("oneshot");
 
-    // Bearer 鉴权通过后落到占位路由：501 not_implemented（证明 token 被接受）。
-    assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+    // Bearer 鉴权被接受：落到已打通的 tracker 视图（200），而非 401。
+    assert_eq!(response.status(), StatusCode::OK);
 }
 
 #[tokio::test]
@@ -261,6 +261,7 @@ async fn every_placeholder_contract_route_answers_not_implemented_with_the_op_to
                 | "/v1/agent-runner/attempts/{attempt_id}/abort"
                 | "/v1/agent-runner/attempts/{attempt_id}/follow-up"
                 | "/v1/agent-runner/attempts/{attempt_id}/clear-queue"
+                | "/v1/merge/proposals"
         ) {
             continue;
         }
@@ -343,9 +344,8 @@ async fn a_known_route_with_the_wrong_method_is_a_closed_set_method_not_allowed(
 #[tokio::test]
 async fn error_envelopes_are_the_same_shape_on_every_face() {
     let responses = [
-        (Method::GET, "/v1/tracker/issues", None),            // unauthorized
-        (Method::POST, "/v1/merge/proposals", Some(OP_TOKEN)),     // not_implemented
-        (Method::GET, "/v1/nope", Some(OP_TOKEN)),                 // not_found
+        (Method::GET, "/v1/tracker/issues", None),     // unauthorized
+        (Method::GET, "/v1/nope", Some(OP_TOKEN)),      // not_found
     ];
     let mut codes = Vec::new();
     for (method, uri, token) in responses {
@@ -362,14 +362,7 @@ async fn error_envelopes_are_the_same_shape_on_every_face() {
         assert!(!json.contains("\"details\""), "details 缺省不出现：{json}");
         codes.push(err.code);
     }
-    assert_eq!(
-        codes,
-        vec![
-            ErrorCode::Unauthorized,
-            ErrorCode::NotImplemented,
-            ErrorCode::NotFound
-        ]
-    );
+    assert_eq!(codes, vec![ErrorCode::Unauthorized, ErrorCode::NotFound]);
 }
 
 #[tokio::test]
@@ -379,10 +372,10 @@ async fn the_router_is_reusable_across_requests() {
     for _ in 0..3 {
         let response = app
             .clone()
-            .oneshot(request(Method::POST, "/v1/merge/proposals", Some(OP_TOKEN)))
+            .oneshot(request(Method::GET, "/v1/tracker/issues", Some(OP_TOKEN)))
             .await
             .expect("oneshot");
-        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+        assert_eq!(response.status(), StatusCode::OK);
     }
 }
 

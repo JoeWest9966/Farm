@@ -1,3 +1,8 @@
+# cargo-dist 工作区配置头（cargo-dist 0.28.0 要求 dist-workspace.toml 带 [workspace] 标记；
+# 缺它连配置都解析不过——原交付缺此头，从未真正构建过产物）。
+[workspace]
+members = ["cargo:"]
+
 # cargo-dist 配置（ticket #11）：farm-host 单二进制多平台产物。
 #
 # ADR-0003 决策 4：部署形态是单二进制——前端 WASM 经 rust-embed 嵌入 axum 静态路由，

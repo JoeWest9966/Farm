@@ -117,8 +117,7 @@ impl TrackerService {
     /// - 持有者本人释放 → 成功（记一条历史）；
     /// - 无人持有 → 幂等空操作（重复 release 不报错）；
     /// - 持着票的是别人 → [`TrackerError::Conflict`]。
-    pub fn release(&self, issue_id: &str, assignee: &str) -> Result<ReleaseOutcome, TrackerError> {
-        self.sync()?;
+    pub fn release(&self, issue_id: &str, assignee: &str) -> Result<ReleaseOutcome, TrackerError> {        self.sync()?;
         let outcome = self.store.release(issue_id, assignee, &now_rfc3339())?;
         match outcome {
             ReleaseOutcome::Released | ReleaseOutcome::NotClaimed => Ok(outcome),
@@ -130,6 +129,22 @@ impl TrackerService {
                 issue_id: issue_id.to_string(),
             }),
         }
+    }
+
+    /// **关票投影**（GLOSSARY「投影」；merge 服务 #18 的投影目标）。
+    ///
+    /// 完成信号（集成分支上的 merge commit）出现**之后**，宿主按 workflow 开关
+    /// 机械把归一化票标成 `done`。`done` 是**不可逆事实**（与 `release` 对已关票
+    /// 的处理同语义）：之后的 provider sync 不会把它降级回 open/claimed，
+    /// 见 [`TrackerStore::upsert_snapshot`]。
+    ///
+    /// 票不在归一化视图里 → `Ok(None)`（投影记 `failed`，不影响完成信号）。
+    pub fn close(&self, issue_id: &str, actor: &str) -> Result<Option<Issue>, TrackerError> {
+        self.sync()?;
+        if !self.store.close_issue(issue_id, actor, &now_rfc3339())? {
+            return Ok(None);
+        }
+        Ok(self.store.find_issue(issue_id)?)
     }
 
     /// 单票状态历史（落库后可查询；按发生次序）。
