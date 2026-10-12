@@ -166,7 +166,7 @@ CLI 唯一机器接口（`cmd/ledger/main.go`）：`ledger record|read|verify|re
 ### 4.3 完成度、未决与对 Farm 的价值
 
 96 JS + 23 Go 测试全绿；真机部署演示（systemd 257.13）有记录。
-**未决（作者明写在 `.scratch/sentry/issues/13、14`，均 open）**：pi 主线出现 `@earendil-works/pi-durable`（Experimental，自带 `beforeTool` 拦卡 + 持久状态 + durable task）—— 哨兵是否迁移地基未裁；当前实现建在 **0.84.3**（fail-safe：hook 抛异常不 fail-closed）而 durable 是 fail-closed，**换地基必须重读 `gate_failed` 触发差异**。
+**未决（作者明写在 `.scratch/sentry/issues/13、14`，均 open）**：pi 主线出现 `@earendil-works/pi-durable`（Experimental，自带 `beforeTool` 拦卡 + 持久状态 + durable task）—— 哨兵是否迁移地基未裁；当前实现建在 **0.84.3**（实测 hook 抛异常同样拦下——「0.84.3 = fail-safe（放行）」的前提经 pi 1.0.2 重验证伪；与 durable 的真差别在**静默**：留不留 `extension_error` 遥测、异常文本是否泄进对话，见 ADR-0004 勘误 2026-10-12）而 durable 是 fail-closed，**换地基必须重读 `gate_failed` 触发差异**。
 **明确不做（撞到就拒绝）**：面板/富 UI/手机应答（Reins）、预算闸、凭据签发（Warehouse）、执行编排（成品项目）、Crossline 芯片闸本体、durable 地基（舰队迁移时重估）。
 
 **对 Farm 的直接价值（最高）**：如果 Farm 驱动的 agent 运行时是 pi，**哨兵扩展今天就能装**（它就是 pi 扩展，落点 `<agent-dir>/extensions/` 或 Warehouse 的 `nw/extensions/<仓库>/<条目>/` + 登记 `settings.packages`），配上 Kron 二进制即得到一套**有测试的无人值守审批门 + 可审计账**。若不驱动 pi，则这套「三层手册 + 先落 pending 再 block + fail-closed 硬上限 + reason 白名单 + spool 幂等重放」是 Farm 自建 gate 的**现成规格**。
@@ -327,7 +327,7 @@ Whitehelmet（纠察）──干完活审本次改动──▶ 判决 JSON（pas
 
 1. **面板这件事在这五个仓里是空位，且空位是刻意留的**。五仓零 HTTP/零服务端；Warehouse 用 40+ 处注释为「面板」准备了渲染纪律（id 稳定、数组恒为数组、字段名即契约），却明确把面板写进 Out of scope。**Farm 的面板因此不重复任何人，但也拿不到现成后端**——只有 CLI + JSON。
 2. **如果 Farm 的 agent 运行时是 pi，那么「审批门 + 审计账 + 装机」三件今天就有可运行实现**（Sentry 扩展 / Kron 二进制 / Warehouse `nw`），用法是**子进程 + JSON**，不是链接。如果 Farm 不用 pi，则这三份**规格**仍然完整可用，代价是 Rust 重写。
-3. **版本偏斜是必须先裁的前置**：Sentry 与 Slaveholder 的证据全建在 **pi 0.84.3**，Warehouse 的转正配方 pin **1.0.2**，durable 是 Experimental 且**换地基会改变 fail-closed 语义**（0.84.3 fail-safe vs durable fail-closed）。Farm 必须先钉一个 pi 版本，并明确「换版本要重读哪几条证据」。
+3. **版本偏斜是必须先裁的前置**：Sentry 与 Slaveholder 的证据全建在 **pi 0.84.3**，Warehouse 的转正配方 pin **1.0.2**，durable 是 Experimental 且**换地基会改变 fail-closed 语义**（durable hook 抛异常 = fail-closed；0.84.3 实测同样拦下——「fail-safe」前提不成立，差别在静默：遥测留不留、异常文本是否泄进对话，见 ADR-0004 勘误 2026-10-12）。Farm 必须先钉一个 pi 版本，并明确「换版本要重读哪几条证据」。
 
 ---
 
