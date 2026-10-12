@@ -11,11 +11,16 @@ use std::sync::LazyLock;
 use serde::Serialize;
 
 use crate::admin::{AdminPluginListResponse, AdminStatusResponse, PluginState, PluginSummary};
+use crate::control::{TickControlRequest, TickControlStatus, TickState};
 use crate::error::{ContractError, ErrorCode};
 use crate::events::{EventEnvelope, EventKind, NewEvent, WsHello};
 use crate::handshake::{
     AuthScheme, ClientInfo, ClientKind, HandshakeRequest, HandshakeResponse, ADMIN_PREFIX,
     CONTRACT_MAJOR, CONTRACT_PREFIX, CONTRACT_VERSION, HANDSHAKE_PATH, HOST_VERSION,
+};
+use crate::overlay::{
+    OverlayClearRequest, OverlayClearResponse, OverlayEntry, OverlayKey, OverlaySetRequest,
+    OverlayStatus, OverlayValueKind,
 };
 use crate::routes::{AdminRouteSpec, RouteSpec, ADMIN_ROUTES, CONTRACT_ROUTES};
 use crate::workflow::{
@@ -123,6 +128,16 @@ fn named_type_schemas() -> Vec<(&'static str, serde_json::Value)> {
         ("EffectiveSource", schema_value::<EffectiveSource>()),
         ("LastKnownGoodInfo", schema_value::<LastKnownGoodInfo>()),
         ("WorkflowConfigStatus", schema_value::<WorkflowConfigStatus>()),
+        ("OverlayKey", schema_value::<OverlayKey>()),
+        ("OverlayValueKind", schema_value::<OverlayValueKind>()),
+        ("OverlayEntry", schema_value::<OverlayEntry>()),
+        ("OverlaySetRequest", schema_value::<OverlaySetRequest>()),
+        ("OverlayClearRequest", schema_value::<OverlayClearRequest>()),
+        ("OverlayClearResponse", schema_value::<OverlayClearResponse>()),
+        ("OverlayStatus", schema_value::<OverlayStatus>()),
+        ("TickState", schema_value::<TickState>()),
+        ("TickControlStatus", schema_value::<TickControlStatus>()),
+        ("TickControlRequest", schema_value::<TickControlRequest>()),
     ]
 }
 

@@ -11,12 +11,14 @@ use std::sync::Arc;
 use crate::agent_runner::AgentRunner;
 use crate::audit::AuditSink;
 use crate::config::HostConfig;
+use crate::control::TickControl;
 use crate::db::Database;
 use crate::error::CoreError;
 use crate::event_log::EventLog;
 use crate::events::EventBus;
 use crate::merge::MergeService;
 use crate::migrations::{Migrator, MIGRATIONS};
+use crate::overlay::OverlayService;
 use crate::tracker::{NativeAdapter, TrackerService};
 use crate::workflow::WorkflowService;
 use crate::workspace::WorkspaceService;
@@ -50,6 +52,16 @@ pub struct AppState {
     /// 完成信号 = 集成分支上该票的 merge commit。测试经 [`AppState::with_merge`]
     /// 换成快的测试闸门（生产默认 `cargo test`）。
     pub merge: MergeService,
+    /// 覆盖层句柄（#24，加法追加）：对 workflow 配置基线的**临时运行时覆盖**
+    /// （GLOSSARY「覆盖层」/ ADR-0002 §2 配置双层 / ADR-0005 §6 per-仓库 keyed，
+    /// 落宿主私有 SQLite，不落被编排仓库）。
+    pub overlay: OverlayService,
+    /// tick 控制面（#24，加法追加）：暂停/恢复编排 tick 的宿主持有开关。
+    ///
+    /// 易失（ADR-0005 §2：调度瞬态不落库）；编排器的观测面是契约事件总线——
+    /// 每次暂停/恢复都发一条 `needs_attention`（payload `kind = "tick_control"`），
+    /// 循环折叠它即得当前 tick 态（见 [`crate::control`]）。
+    pub control: TickControl,
     /// 审计双写旁路（#20，加法追加）：关键事件经 `ledger record` 子进程进 Kron 账本。
     ///
     /// **默认禁用**（`AuditSink::disabled()`）：宿主没配上 `ledger` 之前一个子进程都不起，
@@ -95,6 +107,8 @@ impl AppState {
             event_log: EventLog::new(),
             agent_runner: default_agent_runner(&db),
             merge: MergeService::new(db.clone()),
+            overlay: OverlayService::new(db.clone()),
+            control: TickControl::new(),
             audit,
             db,
             events,
@@ -118,6 +132,12 @@ impl AppState {
     /// 覆写 tracker 句柄（测试注入 native 票源 / 宿主换 provider adapter）。
     pub fn with_tracker(mut self, tracker: TrackerService) -> Self {
         self.tracker = tracker;
+        self
+    }
+
+    /// 覆写 tick 控制面（测试替身 / 宿主换控制实现）。
+    pub fn with_control(mut self, control: TickControl) -> Self {
+        self.control = control;
         self
     }
 

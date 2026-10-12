@@ -13,16 +13,23 @@
 //! 所以文档不可能与类型漂移。
 
 pub mod admin;
+pub mod control;
 pub mod docs;
 pub mod error;
 pub mod events;
 pub mod handshake;
+pub mod overlay;
 pub mod routes;
 pub mod services;
 pub mod workflow;
 
+pub use control::{TickControlRequest, TickControlStatus, TickState};
 pub use error::{ContractError, ErrorCode};
 pub use events::{EventEnvelope, EventKind, NewEvent, WsHello};
+pub use overlay::{
+    validate_value, OverlayClearRequest, OverlayClearResponse, OverlayEntry, OverlayKey,
+    OverlaySetRequest, OverlayStatus, OverlayValueKind, OVERLAY_TEMPORARY_MARKER,
+};
 pub use handshake::{
     is_compatible, AuthScheme, ClientInfo, ClientKind, HandshakeRequest, HandshakeResponse,
     ADMIN_PREFIX, CONTRACT_MAJOR, CONTRACT_PREFIX, CONTRACT_VERSION, HANDSHAKE_PATH, HOST_VERSION,

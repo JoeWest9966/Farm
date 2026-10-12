@@ -47,6 +47,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Err(e) => tracing::warn!(error = %e, "host crash recovery failed (non-fatal)"),
     }
+    // 覆盖层重启提示（ADR-0002 §2，ticket #24）：有覆盖层的仓库逐条发 needs_attention，
+    // 问人类要不要恢复基线。非致命——提示发不出去不影响宿主启动（覆盖层仍生效）。
+    match state.overlay.prompt_restore(&state) {
+        Ok(repos) if !repos.is_empty() => tracing::info!(
+            repos = repos.len(),
+            "overlay restore prompt: temporary overlays are still in effect"
+        ),
+        Ok(_) => {}
+        Err(e) => tracing::warn!(error = %e, "overlay restore prompt failed (non-fatal)"),
+    }
     let router = build_router(state);
 
     let listener = tokio::net::TcpListener::bind(bind).await?;
