@@ -16,6 +16,8 @@
 //! Farm 进程内存中的存活时间 = spawn 窗口。另留 [`credentials_leaked_into`] 作 #19 联测接缝。
 
 use std::process::Command as StdCommand;
+use std::process::Stdio;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -236,6 +238,152 @@ pub fn credentials_leaked_into(
         })
         .map(|(key, _)| key.clone())
         .collect()
+}
+
+/// Warehouse `nw key get` 凭据源：GLOSSARY「过路财神」/ ADR-0004 决策 3 的 #17 落地。
+///
+/// Farm 是过路财神，不是保管人：spawn 前为每个 key 子进程调 `nw key get <key> [--repo <p>]`，
+/// 解析 Warehouse 的 JSON envelope，把它说的 env 对交回 spawn 窗口注入 pi 子进程。**零缓存**
+/// （每次 [`CredentialCourier::collect`] 都重新跑 `nw`）、**零落盘**（只把 stdout 收进内存
+/// 解析，绝不写任何文件）——凭据在 Farm 进程内存中的存活时间 = spawn 窗口（即 `collect` 返回的
+/// `Vec` 被移进 spawn 计划、子进程起来后原值即被丢弃的那一段）。
+///
+/// `nw` 二进制路径**可注入**（测试指向 fake nw；生产用 PATH 上的 `nw`）。`nw` 子进程的额外
+/// env 也可注入（Warehouse 认 `NW_HOME` 等 env 覆盖；测试用它隔离 fake nw 的场景配置，
+/// 绝不污染宿主自己的 env——凭据注入是单向的）。
+#[derive(Clone, Debug)]
+pub struct WarehouseCourier {
+    /// `nw` 可执行文件（可注入；缺省在 PATH 上找 `nw`）。
+    program: String,
+    /// 要取的 key 名清单（每个跑一次 `nw key get <key>`）。
+    keys: Vec<String>,
+    /// 可选 `--repo <path>`：数据仓位置（Warehouse 两仓取货）。
+    repo: Option<String>,
+    /// 单个 `nw key get` 子进程的超时（到点强杀并判失败，绝不久悬 spawn 窗口）。
+    timeout: Duration,
+    /// 注入 `nw` 子进程的额外 env（如 `NW_HOME`；测试用它传 fake nw 场景）。
+    env: Vec<(String, String)>,
+}
+
+impl WarehouseCourier {
+    /// 默认子进程超时：10s。真 `nw` 是个快 CLI；久悬即当失败，绝不卡住 spawn 窗口。
+    pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
+
+    /// 构造：`program` 指向 `nw`（测试传 fake nw 绝对路径），`keys` 是要取的凭据名。
+    pub fn new(program: impl Into<String>, keys: Vec<String>) -> Self {
+        Self {
+            program: program.into(),
+            keys,
+            repo: None,
+            timeout: Self::DEFAULT_TIMEOUT,
+            env: Vec::new(),
+        }
+    }
+
+    /// 数据仓位置（`--repo <path>` 传给 `nw`）。
+    pub fn with_repo(mut self, repo: impl Into<String>) -> Self {
+        self.repo = Some(repo.into());
+        self
+    }
+
+    /// 覆写单个 `nw key get` 子进程的超时。
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    /// 给 `nw` 子进程加一对 env（只进该子进程，不污染宿主 env）。
+    pub fn with_env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.env.push((key.into(), value.into()));
+        self
+    }
+
+    /// 跑一个 `nw key get <key>`，返回解析出的 env 对（失败即 spawn 失败）。
+    fn fetch_key(&self, key: &str) -> Result<(String, String), CoreError> {
+        let mut command = StdCommand::new(&self.program);
+        command.arg("key").arg("get").arg(key);
+        if let Some(repo) = &self.repo {
+            command.arg("--repo").arg(repo);
+        }
+        for (env_key, env_value) in &self.env {
+            command.env(env_key, env_value);
+        }
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let (status, stdout, stderr) = run_to_completion_with_timeout(command, self.timeout)?;
+        parse_nw_key_response(key, status.success(), &stdout).map_err(|error| match stderr {
+            stderr if !stderr.trim().is_empty() => CoreError::Config(format!(
+                "{error} (nw stderr: {})",
+                stderr.trim()
+            )),
+            _ => error,
+        })
+    }
+}
+
+impl CredentialCourier for WarehouseCourier {
+    fn collect(&self, _request: &CredentialRequest) -> Result<Vec<(String, String)>, CoreError> {
+        // 零缓存：每次都真的为每个 key 跑一次 `nw`，不读任何本地副本。
+        let mut pairs = Vec::with_capacity(self.keys.len());
+        for key in &self.keys {
+            pairs.push(self.fetch_key(key)?);
+        }
+        Ok(pairs)
+    }
+}
+
+/// 同步跑一个子进程到结束，带超时；返回 `(exit_status, stdout, stderr)`。
+///
+/// stdout/stderr 由独立线程抽干（避开管道缓冲区写满导致的死锁），主线程轮询 `try_wait`
+/// 到点或超时。超时即强杀并判失败——绝不让他人（`nw` 卡死）拖住 spawn 窗口。纯 `std`，无新依赖。
+fn run_to_completion_with_timeout(
+    mut command: StdCommand,
+    timeout: Duration,
+) -> Result<(std::process::ExitStatus, String, String), CoreError> {
+    use std::io::Read;
+    let mut child = command.spawn().map_err(CoreError::Io)?;
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let out_reader = std::thread::spawn(move || {
+        let mut buf = String::new();
+        if let Some(mut pipe) = stdout {
+            let _ = pipe.read_to_string(&mut buf);
+        }
+        buf
+    });
+    let err_reader = std::thread::spawn(move || {
+        let mut buf = String::new();
+        if let Some(mut pipe) = stderr {
+            let _ = pipe.read_to_string(&mut buf);
+        }
+        buf
+    });
+
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait().map_err(CoreError::Io)? {
+            Some(status) => {
+                let out = out_reader.join().unwrap_or_default();
+                let err = err_reader.join().unwrap_or_default();
+                return Ok((status, out, err));
+            }
+            None => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = out_reader.join();
+                    let _ = err_reader.join();
+                    return Err(CoreError::Config(format!(
+                        "credential subprocess timed out after {}ms",
+                        timeout.as_millis()
+                    )));
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+    }
 }
 
 #[cfg(test)]
