@@ -861,6 +861,209 @@
       "title": "NewEvent",
       "type": "object"
     },
+    "OverlayClearRequest": {
+      "additionalProperties": false,
+      "description": "清除覆盖层：给 `key` 清一条，不给清该仓库全部。",
+      "properties": {
+        "key": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OverlayKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "title": "OverlayClearRequest",
+      "type": "object"
+    },
+    "OverlayClearResponse": {
+      "additionalProperties": false,
+      "description": "清除结果（回报真清了哪几条）。",
+      "properties": {
+        "cleared": {
+          "items": {
+            "$ref": "#/$defs/OverlayKey"
+          },
+          "type": "array"
+        },
+        "repo_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo_id",
+        "cleared"
+      ],
+      "title": "OverlayClearResponse",
+      "type": "object"
+    },
+    "OverlayEntry": {
+      "additionalProperties": false,
+      "description": "一条覆盖层（查询 API 的清单项）。",
+      "properties": {
+        "key": {
+          "$ref": "#/$defs/OverlayKey"
+        },
+        "note": {
+          "description": "人读理由（谁为什么临时改这一格）。",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "repo_id": {
+          "type": "string"
+        },
+        "temporary": {
+          "description": "显式标记：**这是临时覆盖**（ADR-0002 §2）。必填——标记不允许缺席。",
+          "type": "boolean"
+        },
+        "updated_at": {
+          "description": "最近一次写入/更新时间（RFC3339）。",
+          "type": "string"
+        },
+        "value": true
+      },
+      "required": [
+        "repo_id",
+        "key",
+        "value",
+        "temporary",
+        "updated_at"
+      ],
+      "title": "OverlayEntry",
+      "type": "object"
+    },
+    "OverlayKey": {
+      "description": "覆盖层键闭集：workflow 配置六要素的可覆盖字段。\n\nwire 字符串与 [`OverlayKey::as_str`] 一致（`retry_backoff.` / `projection.`\n两级点号路径，直接对着配置字段念）。",
+      "enum": [
+        "max_concurrency",
+        "stall_threshold_secs",
+        "dispatch_labels",
+        "prompt_template",
+        "retry_backoff.max_retries",
+        "retry_backoff.base_delay_ms",
+        "retry_backoff.backoff_multiplier",
+        "projection.close_issue",
+        "projection.open_pr",
+        "projection.comment_merge_commit",
+        "projection.add_label"
+      ],
+      "title": "OverlayKey",
+      "type": "string"
+    },
+    "OverlaySetRequest": {
+      "additionalProperties": false,
+      "description": "设置一条覆盖层。",
+      "properties": {
+        "key": {
+          "$ref": "#/$defs/OverlayKey"
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "value": true
+      },
+      "required": [
+        "key",
+        "value"
+      ],
+      "title": "OverlaySetRequest",
+      "type": "object"
+    },
+    "OverlayStatus": {
+      "additionalProperties": false,
+      "description": "覆盖层生效视图（查询 API 的响应）：基线 + 覆盖层 + 生效值。",
+      "properties": {
+        "baseline": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkflowConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "被编排仓库的基线配置（workflow 当前配置 / LKG；从未装载则为 `None`）。"
+        },
+        "effective": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkflowConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "生效配置 = 基线 + 覆盖层。"
+        },
+        "overlay_applied": {
+          "description": "是否施加了覆盖层（`false` = 生效值就是基线）。",
+          "type": "boolean"
+        },
+        "overlays": {
+          "description": "覆盖层清单（每条都带临时标记）。",
+          "items": {
+            "$ref": "#/$defs/OverlayEntry"
+          },
+          "type": "array"
+        },
+        "repo_id": {
+          "type": "string"
+        },
+        "restore_prompt": {
+          "description": "重启后提示恢复基线（有覆盖层时就有这句话；`None` = 无需提示）。",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "repo_id",
+        "overlay_applied",
+        "overlays"
+      ],
+      "title": "OverlayStatus",
+      "type": "object"
+    },
+    "OverlayValueKind": {
+      "description": "覆盖层值的种类（闭集）：决定 JSON 形状与取值范围。",
+      "oneOf": [
+        {
+          "const": "count",
+          "description": "计数（>= 1 的整数）。",
+          "type": "string"
+        },
+        {
+          "const": "seconds",
+          "description": "秒数（>= 1 的整数；`retry_backoff.base_delay_ms` 是毫秒，同形状）。",
+          "type": "string"
+        },
+        {
+          "const": "labels",
+          "description": "标签清单（至少一个非空字符串）。",
+          "type": "string"
+        },
+        {
+          "const": "text",
+          "description": "文本（非空白）。",
+          "type": "string"
+        },
+        {
+          "const": "flag",
+          "description": "开关（布尔）。",
+          "type": "string"
+        }
+      ],
+      "title": "OverlayValueKind"
+    },
     "PluginState": {
       "description": "插件状态（占位闭集；`quarantined` 见 GLOSSARY「隔离」）。\n\n宿主侧插件监督状态（ticket #19 的 `plugin_state` 表）与宿主管理 API 的投影共用\n同一个闭集，所以它是插件管理面的单一源：`CHECK` 约束由 [`PluginState::ALL`] 生成。",
       "oneOf": [
@@ -1062,6 +1265,71 @@
       ],
       "title": "SteerRequest",
       "type": "object"
+    },
+    "TickControlRequest": {
+      "additionalProperties": false,
+      "description": "暂停 / 恢复请求（理由可选）。",
+      "properties": {
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "title": "TickControlRequest",
+      "type": "object"
+    },
+    "TickControlStatus": {
+      "additionalProperties": false,
+      "description": "tick 控制面的当前状态（查询 API 的响应）。",
+      "properties": {
+        "actor": {
+          "description": "谁按的（`panel` / `orchestrator` / 人类经面板）。",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "description": "暂停理由（人读；编排器/面板可照抄进自己的日志）。",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/TickState"
+        },
+        "updated_at": {
+          "description": "最近一次切换时间（RFC3339；从未切过则为 `None`）。",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "title": "TickControlStatus",
+      "type": "object"
+    },
+    "TickState": {
+      "description": "tick 状态（闭集：二值，没有第三种「半暂停」）。",
+      "oneOf": [
+        {
+          "const": "running",
+          "description": "正常：编排器循环每 tick 该派发就派发。",
+          "type": "string"
+        },
+        {
+          "const": "paused",
+          "description": "暂停：编排器循环读到它就跳过本 tick（不派发、不回收、只等待）。",
+          "type": "string"
+        }
+      ],
+      "title": "TickState"
     },
     "WorkflowConfig": {
       "description": "被编排仓库的 workflow 配置（`.farm/workflow.json` 解析后的形状）。\n\n前向兼容：未知字段被忽略（不因仓库用了更新版字段名而判非法）；但四个核心字段\n（dispatch_labels / max_concurrency / stall_threshold_secs / prompt_template）缺失即解析\n失败。合法性由 `farm-core` 的语义校验判定（缺一即回退 LKG，绝不 panic）。",

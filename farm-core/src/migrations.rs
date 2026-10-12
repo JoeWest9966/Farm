@@ -149,7 +149,8 @@ fn v5_event_log(conn: &Connection) -> rusqlite::Result<()> {
 ///
 /// v3 的 SQL 住 [`crate::tracker::migrations`]（按五服务分域）；v7 的 SQL 住
 /// [`crate::merge::migrations`]（#18 跟随同一先例）；v8 的 SQL 住
-/// [`crate::plugin::migrations`]（#19 跟随同一先例）；v2/v4/v5 为早期内联，保留原样。
+/// [`crate::plugin::migrations`]（#19）；v9 的 SQL 住
+/// [`crate::overlay::migrations`]（#24 覆盖层）；v2/v4/v5 为早期内联，保留原样。
 pub const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 1,
@@ -190,5 +191,10 @@ pub const MIGRATIONS: &[Migration] = &[
         version: 8,
         name: "plugin_state",
         up: crate::plugin::migrations::v8_plugin_state,
+    },
+    Migration {
+        version: 9,
+        name: "workflow_overlay",
+        up: crate::overlay::migrations::v9_workflow_overlay,
     },
 ];

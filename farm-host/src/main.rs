@@ -47,6 +47,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Err(e) => tracing::warn!(error = %e, "host crash recovery failed (non-fatal)"),
     }
+    // 覆盖层重启提示（ADR-0002 §2，ticket #24）：有覆盖层的仓库逐条发 needs_attention，
+    // 问人类要不要恢复基线。非致命——提示发不出去不影响宿主启动（覆盖层仍生效）。
+    match state.overlay.prompt_restore(&state) {
+        Ok(repos) if !repos.is_empty() => tracing::info!(
+            repos = repos.len(),
+            "overlay restore prompt: temporary overlays are still in effect"
+        ),
+        Ok(_) => {}
+        Err(e) => tracing::warn!(error = %e, "overlay restore prompt failed (non-fatal)"),
+    }
     // 插件骨架（#19，ADR-0004 决策 4）：启动对账（上次 running 的子进程已随宿主死）+
     // 按清单拉起插件。launch 只等第一次握手（有超时上界），崩溃由监督循环按分级退避
     // 重试，不阻塞宿主启动。清单经 FARM_PLUGINS（逗号分隔的程序路径）注入。
