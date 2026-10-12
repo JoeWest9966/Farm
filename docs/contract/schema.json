@@ -1217,6 +1217,48 @@
       "title": "RetryBackoff",
       "type": "object"
     },
+    "ServiceControlStatus": {
+      "additionalProperties": false,
+      "description": "服务启停控制面的当前状态（`GET /admin/services` 响应；五服务俱全）。",
+      "properties": {
+        "services": {
+          "items": {
+            "$ref": "#/$defs/ServiceControlStatusEntry"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "services"
+      ],
+      "title": "ServiceControlStatus",
+      "type": "object"
+    },
+    "ServiceControlStatusEntry": {
+      "additionalProperties": false,
+      "description": "单个服务的启停状态（宿主管理面投影，ticket #23）。",
+      "properties": {
+        "service": {
+          "$ref": "#/$defs/ServiceName"
+        },
+        "state": {
+          "$ref": "#/$defs/ServiceRunState"
+        },
+        "updated_at": {
+          "description": "最近一次启停切换时间（RFC3339；从未切过则为 `None`）。",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "service",
+        "state"
+      ],
+      "title": "ServiceControlStatusEntry",
+      "type": "object"
+    },
     "ServiceName": {
       "description": "v1 五服务（闭集）。",
       "oneOf": [
@@ -1247,6 +1289,22 @@
         }
       ],
       "title": "ServiceName"
+    },
+    "ServiceRunState": {
+      "description": "服务的运行态（宿主管理面「服务启停」，ticket #23）：二值闭集。\n\n与 [`PluginState`] 三态闭集**不同**：服务是宿主自身的五服务（ADR-0001），没有\nquarantined 语义（那是插件进程崩溃重试耗尽的状态，GLOSSARY「隔离」）。",
+      "oneOf": [
+        {
+          "const": "running",
+          "description": "运行中（默认；宿主启动即五服务俱在）。",
+          "type": "string"
+        },
+        {
+          "const": "stopped",
+          "description": "被人经管理面停机（易失宿主持有开关，重启后回到 running）。",
+          "type": "string"
+        }
+      ],
+      "title": "ServiceRunState"
     },
     "SteerRequest": {
       "additionalProperties": false,
@@ -1330,6 +1388,44 @@
         }
       ],
       "title": "TickState"
+    },
+    "TrackerProviderConfig": {
+      "additionalProperties": false,
+      "description": "tracker provider / adapter 配置（宿主管理面视图，ticket #23）。\n\nGLOSSARY「Tracker 服务」：provider 语义（GitHub/Gogs/native）关进 adapter，服务与契约不动。\nprovider 名是 **host-private**（ADR-0005 §5）——它进宿主管理 API 的投影，**不进契约路由**。\nv1 唯一 adapter 是 `native`；换 provider = 加一个 `TrackerAdapter` 实现。",
+      "properties": {
+        "known_providers": {
+          "description": "可选 adapter 清单（面板据此渲染选择器；host-private）。",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "provider": {
+          "description": "当前选中的 provider / adapter 名（未设置时默认 `native`）。",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "known_providers"
+      ],
+      "title": "TrackerProviderConfig",
+      "type": "object"
+    },
+    "TrackerProviderSelection": {
+      "additionalProperties": false,
+      "description": "设置 tracker provider / adapter 的请求体（ticket #23）。",
+      "properties": {
+        "provider": {
+          "description": "要切换到的 provider / adapter 名（未知名 → 闭集 `invalid_request`）。",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider"
+      ],
+      "title": "TrackerProviderSelection",
+      "type": "object"
     },
     "WorkflowConfig": {
       "description": "被编排仓库的 workflow 配置（`.farm/workflow.json` 解析后的形状）。\n\n前向兼容：未知字段被忽略（不因仓库用了更新版字段名而判非法）；但四个核心字段\n（dispatch_labels / max_concurrency / stall_threshold_secs / prompt_template）缺失即解析\n失败。合法性由 `farm-core` 的语义校验判定（缺一即回退 LKG，绝不 panic）。",

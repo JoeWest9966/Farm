@@ -6,12 +6,14 @@
 //!    `GET /v1/events/stream` 是 WS、`GET /v1/events/history` 是事件快照（#15 投影面），
 //!    `GET /v1/workspace/mappings`（#14 映射视图）、tracker 的 `GET /v1/tracker/issues` 与
 //!    `POST /v1/tracker/claims`（#13）也已真正打通；其余返回闭集 `not_implemented`——归 #16–#18。
-//! 2. **宿主管理 API**：`ADMIN_ROUTES` 两条，独立前缀 `/admin`；管理 token
-//!    校验机制是接口位，归 #23。
+//! 2. **宿主管理 API**：`ADMIN_ROUTES` 若干，独立前缀 `/admin` + **独立管理 token**
+//!    （`X-Farm-Admin-Token`，#23）：插件装卸/恢复、tracker provider 配置、服务启停。
+//!    管理 token ≠ 操作 token（spec 新裁决）——`admin::require_admin_token` 校验，交叉访问被拒。
 //! 3. **面板伺服**：`build.rs` 把 `farm-panel` 编成 wasm 并嵌入，`/` 伺服。
 //!
-//! 鉴权（ticket #11）：契约面（含 `/handshake` 与 WS upgrade）单 token 静态鉴权，
-//! 缺 token 与错 token 同码同消息（`unauthorized` / 401），避免预言机。
+//! 鉴权：契约面（ticket #11）单 op token 静态鉴权，缺 token 与错 token 同码同消息
+//! （`unauthorized` / 401）；管理面（ticket #23）独立管理 token，op token 递到管理面 →
+//! `forbidden`（越面），缺/错管理 token → `unauthorized`。两面凭据不同、边界分明（ADR-0002 §1）。
 //!
 //! [`build_router`] 是宿主路由的唯一装配点：`main` 与测试用它拿到**同一个**
 //! axum `Router`，所以测试在真实接缝上断言，不另造一个 app。
@@ -102,12 +104,18 @@ pub fn build_router(state: AppState) -> Router {
         auth::require_op_token,
     ));
 
-    // --- 宿主管理 API：前缀独立，管理 token 机制是接口位（#23）---
+    // --- 宿主管理 API：前缀独立，管理 token 校验机制（#23）---
     let mut admin = Router::new();
     for route in ADMIN_ROUTES {
         let endpoint = match (route.method, route.path) {
             ("GET", "/admin/plugins") => get(admin::plugins),
+            ("POST", "/admin/plugins/{id}/recover") => post(admin::recover),
             ("GET", "/admin/status") => get(admin::status),
+            ("GET", "/admin/tracker/provider") => get(admin::tracker_provider),
+            ("POST", "/admin/tracker/provider") => post(admin::set_tracker_provider),
+            ("GET", "/admin/services") => get(admin::services),
+            ("POST", "/admin/services/{name}/stop") => post(admin::stop_service),
+            ("POST", "/admin/services/{name}/start") => post(admin::start_service),
             ("GET", "/admin/workflow/config/{repo_id}") => get(workflow::config_status),
             _ => panic!(
                 "ADMIN_ROUTES 里的 {} {} 未在 farm-host 挂载",
@@ -116,6 +124,13 @@ pub fn build_router(state: AppState) -> Router {
         };
         admin = admin.route(route.path, endpoint);
     }
+    // 管理 token 静态鉴权只盖管理面（#23）：独立凭据，与契约面的 op token 边界分明。
+    // `route_layer` 而非 `layer`：未挂载路径不过中间件；交叉访问在中间件里被判
+    // （op token → forbidden、缺/错管理 token → unauthorized，见 `admin::require_admin_token`）。
+    let admin = admin.route_layer(middleware::from_fn_with_state(
+        state.clone(),
+        admin::require_admin_token,
+    ));
 
     // --- 面板：嵌入资产，`/` 伺服，不带 op token ---
     let panel = panel::router();

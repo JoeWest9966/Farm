@@ -12,6 +12,7 @@ use crate::agent_runner::AgentRunner;
 use crate::audit::AuditSink;
 use crate::config::HostConfig;
 use crate::control::TickControl;
+use crate::service_control::ServiceControl;
 use crate::db::Database;
 use crate::error::CoreError;
 use crate::event_log::EventLog;
@@ -76,6 +77,11 @@ pub struct AppState {
     /// [`PluginHost::recover`]。句柄本身只包存储与监督策略，**没有子进程常驻**：
     /// 没配插件清单的宿主行为一字不变（与 `audit` 默认禁用同理）。
     pub plugin: PluginHost,
+    /// 服务启停控制面（#23，加法追加）：五服务各自的 running/stopped 宿主持有开关。
+    ///
+    /// 易失（ADR-0005 §2：运行瞬态不落库）；与 [`crate::control::TickControl`] 同形不同对象
+    /// （那个停编排 tick、这个停宿主自身服务）。切换时发 `needs_attention` 供编排器/面板观测。
+    pub service_control: ServiceControl,
 }
 
 impl AppState {
@@ -117,6 +123,7 @@ impl AppState {
             merge: MergeService::new(db.clone()),
             overlay: OverlayService::new(db.clone()),
             control: TickControl::new(),
+            service_control: ServiceControl::new(),
             audit,
             plugin: PluginHost::new(&db),
             db,
@@ -153,6 +160,12 @@ impl AppState {
     /// 覆写 tick 控制面（测试替身 / 宿主换控制实现）。
     pub fn with_control(mut self, control: TickControl) -> Self {
         self.control = control;
+        self
+    }
+
+    /// 覆写服务启停控制面（测试替身 / 宿主换控制实现）。
+    pub fn with_service_control(mut self, service_control: ServiceControl) -> Self {
+        self.service_control = service_control;
         self
     }
 

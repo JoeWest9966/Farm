@@ -115,12 +115,42 @@ pub const ADMIN_ROUTES: &[AdminRouteSpec] = &[
     AdminRouteSpec {
         method: "GET",
         path: "/admin/plugins",
-        summary: "插件清单与状态（装卸能力占位）",
+        summary: "插件清单与状态（#19 监督状态 → PluginSummary）",
+    },
+    AdminRouteSpec {
+        method: "POST",
+        path: "/admin/plugins/{id}/recover",
+        summary: "恢复隔离/停机的插件（GLOSSARY「隔离」一键恢复，#19 recover）",
     },
     AdminRouteSpec {
         method: "GET",
         path: "/admin/status",
         summary: "宿主管理面自描述（契约版本 + 五服务）",
+    },
+    AdminRouteSpec {
+        method: "GET",
+        path: "/admin/tracker/provider",
+        summary: "查询当前 tracker provider / adapter 配置（adapter 选择，#23）",
+    },
+    AdminRouteSpec {
+        method: "POST",
+        path: "/admin/tracker/provider",
+        summary: "设置 tracker provider / adapter（adapter 选择，#23）",
+    },
+    AdminRouteSpec {
+        method: "GET",
+        path: "/admin/services",
+        summary: "五服务启停状态（服务启停控制面，#23）",
+    },
+    AdminRouteSpec {
+        method: "POST",
+        path: "/admin/services/{name}/stop",
+        summary: "停机一个服务（服务启停，#23；宿主持有开关，发 needs_attention）",
+    },
+    AdminRouteSpec {
+        method: "POST",
+        path: "/admin/services/{name}/start",
+        summary: "启动一个服务（服务启停，#23）",
     },
     AdminRouteSpec {
         method: "GET",

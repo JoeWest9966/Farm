@@ -1,21 +1,102 @@
-//! 宿主管理 API（host admin API，GLOSSARY）：独立前缀 `/admin`。
+//! 宿主管理 API（host admin API，GLOSSARY）：独立前缀 `/admin` + 独立管理 token（ticket #23）。
 //!
-//! 与编排器契约**边界分明**：管理面管宿主自身（插件装卸、tracker 配置、服务启停），
-//! 契约面管编排原语。本票只留**接口位**：
+//! 与编排器契约**边界分明**（ADR-0002 §1）：管理面管宿主自身（插件装卸/恢复、tracker provider
+//! 配置、服务启停），契约面管编排原语。两者同进程同端口，只是前缀与凭据都不同：
 //!
 //! - 前缀独立（`/admin`，与 `/v1` 不重合）；
-//! - token header 独立（`X-Farm-Admin-Token`，与 op token 不是同一个凭据，
-//!   见 [`farm_sdk::AuthScheme::admin_header`]）；
-//! - **管理 token 校验机制本票不实现**（归 #23）：路由已挂上、可返回自描述，
-//!   但还没有任何鉴权。`#23` 落地时应在此处加管理面中间件，而不是改路由表。
-//!
-//! 插件装卸能力归 #19（`GET /admin/plugins` 现在恒回空清单）。
+//! - token 独立（`X-Farm-Admin-Token`，见 [`farm_sdk::AuthScheme::admin_header`]）——
+//!   **管理 token ≠ 操作 token**（spec 新增裁决）。[`require_admin_token`] 校验管理 token，
+//!   交叉访问被拒：op token 递到管理面 → `forbidden`；管理 token 递到契约面 → 契约面只认
+//!   op token，回 `unauthorized`。契约 API 无法触达任何管理面操作（不是私有后门）。
+//! - 插件装卸/恢复（[`plugins`] / [`recover`]）读 [#19](farm_core::AppState::plugin) 的监督状态；
+//!   tracker provider 配置（[`tracker_provider`] / [`set_tracker_provider`]）与服务启停
+//!   （[`services`] / [`stop_service`] / [`start_service`]）同在此面。
 
-use axum::extract::State;
+use std::sync::LazyLock;
+
+use axum::extract::{Path, State};
+use axum::extract::Request;
+use axum::http::{HeaderMap, HeaderName};
+use axum::middleware::Next;
+use axum::response::{IntoResponse, Response};
 use axum::Json;
 use farm_core::AppState;
-use farm_sdk::admin::{AdminPluginListResponse, AdminStatusResponse};
-use farm_sdk::{ServiceName, CONTRACT_VERSION, HOST_VERSION};
+use farm_sdk::admin::{
+    AdminPluginListResponse, AdminStatusResponse, PluginSummary, ServiceControlStatus,
+    ServiceControlStatusEntry, TrackerProviderConfig, TrackerProviderSelection,
+};
+use farm_sdk::{AuthScheme, ContractError, ServiceName, CONTRACT_VERSION, HOST_VERSION};
+
+use crate::error::ApiError;
+
+/// 管理 token header（`AuthScheme::admin_header`，解析一次复用；与 op token header 不同）。
+static ADMIN_TOKEN_HEADER: LazyLock<HeaderName> = LazyLock::new(|| {
+    let scheme = AuthScheme::default();
+    HeaderName::from_bytes(scheme.admin_header.as_bytes())
+        .expect("AuthScheme::admin_header must be a valid header name")
+});
+
+/// 缺 / 错管理 token 的统一消息（与 op token 的同码策略一致：不区分缺与错）。
+const ADMIN_UNAUTHORIZED_MESSAGE: &str = "missing or invalid host admin token";
+
+/// 交叉访问：op token 递到管理面（已鉴权但越面）→ `forbidden`。
+const ADMIN_FORBIDDEN_MESSAGE: &str = "the orchestrator op token is not valid on the host admin API";
+
+/// 管理面未配置管理 token = 整体禁用（默认安全：没配就不开）。
+const ADMIN_DISABLED_MESSAGE: &str = "host admin API is not enabled (no admin token configured)";
+
+/// 宿主管理 API 鉴权中间件（ticket #23）：**独立管理 token**，与操作 token 边界分明。
+///
+/// 判定顺序（与 [`crate::auth::require_op_token`] 相映，但凭据与 header 都不同）：
+/// 1. 管理 token 命中 → 放行；
+/// 2. 递上来的是**另一个面的有效凭据**（op token）→ `forbidden`（已鉴权但越面，
+///    区别于「没凭据 / 乱凭据」的 `unauthorized`，帮客户端定位「用错 token 了」）；
+/// 3. 其余（缺 / 错管理 token）→ `unauthorized`（同码，不供预言机）。
+///
+/// 没配管理 token（`HostConfig::admin_token = None`）→ 管理面整体禁用，一律 `forbidden`。
+pub async fn require_admin_token(
+    State(state): State<AppState>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let Some(admin_token) = state.config.admin_token.as_ref() else {
+        return ApiError(ContractError::forbidden(ADMIN_DISABLED_MESSAGE)).into_response();
+    };
+    if admin_token_matches(request.headers(), admin_token) {
+        return next.run(request).await;
+    }
+    if crate::auth::op_token_matches(request.headers(), &state.config.op_token) {
+        return ApiError(ContractError::forbidden(ADMIN_FORBIDDEN_MESSAGE)).into_response();
+    }
+    ApiError(ContractError::admin_unauthorized(ADMIN_UNAUTHORIZED_MESSAGE)).into_response()
+}
+
+/// 从请求头取管理 token 并与配置里的静态管理 token 定长比对。
+///
+/// 只认 `X-Farm-Admin-Token`（[`farm_sdk::AuthScheme::admin_header`]），不接受 Bearer——
+/// 管理面是面板专用面，凭据形态单一，减少歧义。
+pub fn admin_token_matches(headers: &HeaderMap, expected: &str) -> bool {
+    headers
+        .get(&*ADMIN_TOKEN_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .map(|token| constant_time_eq(token.trim().as_bytes(), expected.as_bytes()))
+        .unwrap_or(false)
+}
+
+/// 定长比较：不因首个不同字节提前返回，避免经响应时间探测 token 前缀。
+///
+/// 与 [`crate::auth`] 的反预言机比较同形，但**独立一份**：管理凭据的比对路径与操作凭据
+/// 相互独立，正是「两个 token 不是同一个」在代码层的落地（不复用、不改 #11 的 auth.rs）。
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    let max = a.len().max(b.len());
+    let mut diff = (a.len() ^ b.len()) as u8;
+    for i in 0..max {
+        let x = a.get(i).copied().unwrap_or(0);
+        let y = b.get(i).copied().unwrap_or(0);
+        diff |= x ^ y;
+    }
+    diff == 0
+}
 
 /// `GET /admin/status`：宿主管理面自描述。
 pub async fn status(State(state): State<AppState>) -> Json<AdminStatusResponse> {
@@ -27,17 +108,182 @@ pub async fn status(State(state): State<AppState>) -> Json<AdminStatusResponse> 
     })
 }
 
-/// `GET /admin/plugins`：插件清单与状态（装卸能力占位，#19 落地）。
-pub async fn plugins() -> Json<AdminPluginListResponse> {
-    Json(AdminPluginListResponse { plugins: Vec::new() })
+/// `POST /admin/plugins/{id}/recover`：恢复隔离/停机的插件（GLOSSARY「隔离」一键恢复，#19 recover）。
+///
+/// 经 [`farm_core::AppState::plugin`] 的 `PluginHost::recover` 重置重试预算并重启；重启后插件
+/// 自己从契约 API 读状态自愈（不另开私有后门）。返回恢复后的 [`PluginSummary`]。
+pub async fn recover(
+    State(state): State<AppState>,
+    Path(plugin_id): Path<String>,
+) -> Result<Json<PluginSummary>, ApiError> {
+    state
+        .plugin
+        .recover(&state, &plugin_id)
+        .await
+        .map_err(plugin_error)?;
+    let status = state
+        .plugin
+        .status(&plugin_id)
+        .map_err(ApiError::from)?
+        .ok_or_else(|| {
+            ApiError(ContractError::not_found(format!(
+                "plugin {plugin_id} vanished right after recovery"
+            )))
+        })?;
+    Ok(Json(status.to_summary()))
+}
+
+/// `GET /admin/tracker/provider`：查询当前 tracker provider / adapter 配置（adapter 选择）。
+///
+/// 读源是宿主私有 `host_meta` 的 `tracker.provider` 键（默认 `native`）；provider 名是
+/// host-private（ADR-0005 §5），只进管理面投影、不进契约。
+pub async fn tracker_provider(
+    State(state): State<AppState>,
+) -> Result<Json<TrackerProviderConfig>, ApiError> {
+    Ok(Json(current_tracker_config(&state)?))
+}
+
+/// `POST /admin/tracker/provider`：设置 tracker provider / adapter。
+///
+/// 未知名 provider → 闭集 `invalid_request`（400）——**在 HTTP 面校验**给出正确的闭集码
+/// （存储原语的 `CoreError::Config` 会落成 `internal`/500，对客户端错误是错的码）；
+/// 存储层仍自守其不变量（`tracker::set_provider` 也拒未知名，供直接调用方）。
+pub async fn set_tracker_provider(
+    State(state): State<AppState>,
+    Json(selection): Json<TrackerProviderSelection>,
+) -> Result<Json<TrackerProviderConfig>, ApiError> {
+    if !farm_core::tracker::KNOWN_PROVIDERS.contains(&selection.provider.as_str()) {
+        return Err(ApiError(ContractError::invalid_request(format!(
+            "unknown tracker provider {:?}; known providers: {:?}",
+            selection.provider, farm_core::tracker::KNOWN_PROVIDERS
+        ))));
+    }
+    farm_core::tracker::set_provider(&state.db, &selection.provider).map_err(ApiError::from)?;
+    Ok(Json(current_tracker_config(&state)?))
+}
+
+/// 当前 tracker provider 配置（GET 与 POST 共用：读 host_meta + 已知 adapter 清单）。
+fn current_tracker_config(state: &AppState) -> Result<TrackerProviderConfig, ApiError> {
+    let provider = farm_core::tracker::current_provider(&state.db).map_err(ApiError::from)?;
+    let known_providers = farm_core::tracker::KNOWN_PROVIDERS
+        .iter()
+        .map(|provider| provider.to_string())
+        .collect();
+    Ok(TrackerProviderConfig {
+        provider,
+        known_providers,
+    })
+}
+
+/// `GET /admin/services`：五服务启停状态（服务启停控制面）。
+///
+/// 读源是 [`farm_core::AppState::service_control`]（宿主持有易失开关；未显式设过 → running）。
+pub async fn services(
+    State(state): State<AppState>,
+) -> Result<Json<ServiceControlStatus>, ApiError> {
+    Ok(Json(state.service_control.status().map_err(ApiError::from)?))
+}
+
+/// `POST /admin/services/{name}/stop`：停机一个服务（宿主持有开关 + 发 `needs_attention`）。
+pub async fn stop_service(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<ServiceControlStatusEntry>, ApiError> {
+    let service = parse_service(&name)?;
+    Ok(Json(
+        state
+            .service_control
+            .stop(&state, service, "admin")
+            .map_err(ApiError::from)?,
+    ))
+}
+
+/// `POST /admin/services/{name}/start`：启动一个服务。
+pub async fn start_service(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<ServiceControlStatusEntry>, ApiError> {
+    let service = parse_service(&name)?;
+    Ok(Json(
+        state
+            .service_control
+            .start(&state, service, "admin")
+            .map_err(ApiError::from)?,
+    ))
+}
+
+/// 路径参数 → 五服务成员（未知名 → 闭集 `invalid_request`；不猜）。
+fn parse_service(name: &str) -> Result<ServiceName, ApiError> {
+    ServiceName::ALL
+        .into_iter()
+        .find(|service| service.as_str() == name)
+        .ok_or_else(|| {
+            ApiError(ContractError::invalid_request(format!(
+                "unknown service {name:?}; known: tracker, agent-runner, merge, workspace, events"
+            )))
+        })
+}
+
+/// 插件宿主错误 → 契约闭集错误的投影。
+///
+/// 映射放在管理面自己的文件里（而非给 #19 的 `plugin/mod.rs` 加 `From` impl）：
+/// [`farm_core::plugin::PluginError`] 是公开类型，管理面消费它时做闭集投影，边界仍清晰。
+fn plugin_error(error: farm_core::plugin::PluginError) -> ApiError {
+    use farm_core::plugin::PluginError;
+    ApiError(match error {
+        PluginError::Unknown { plugin_id } => {
+            ContractError::not_found(format!("plugin {plugin_id} is not registered"))
+        }
+        PluginError::AlreadyRunning { plugin_id } => ContractError::conflict(format!(
+            "plugin {plugin_id} is already supervised; recovery is for stopped/quarantined plugins"
+        )),
+        PluginError::NotRunning { plugin_id, state } => {
+            ContractError::conflict(format!("plugin {plugin_id} is {state}, not recoverable"))
+        }
+        PluginError::Spawn { plugin_id, .. }
+        | PluginError::Handshake { plugin_id, .. }
+        | PluginError::HandshakeRejected { plugin_id, .. }
+        | PluginError::ExitedBeforeHandshake { plugin_id, .. } => {
+            ContractError::service_unavailable(format!("plugin {plugin_id} could not be relaunched"))
+        }
+        PluginError::InvalidSpec(message) => {
+            ContractError::invalid_request(format!("invalid plugin spec: {message}"))
+        }
+        PluginError::Store(source) => source.to_contract_error(),
+    })
+}
+
+/// `GET /admin/plugins`：插件清单与状态（#19 监督状态 → [`PluginSummary`] 投影）。
+///
+/// 读源是 [`farm_core::AppState::plugin`] 的 `PluginHost::statuses`（v8 `plugin_state` 表）；
+/// 存储故障 → 闭集 `service_unavailable`。
+pub async fn plugins(
+    State(state): State<AppState>,
+) -> Result<Json<AdminPluginListResponse>, ApiError> {
+    let statuses = state.plugin.statuses().map_err(ApiError::from)?;
+    let plugins = statuses.iter().map(|status| status.to_summary()).collect();
+    Ok(Json(AdminPluginListResponse { plugins }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::http::HeaderName;
     use farm_core::HostConfig;
     use farm_sdk::ADMIN_ROUTES;
 
+    fn headers_with(pairs: &[(&str, &str)]) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        for (name, value) in pairs {
+            headers.insert(
+                HeaderName::from_bytes(name.as_bytes()).expect("valid header name"),
+                value.parse().expect("valid header value"),
+            );
+        }
+        headers
+    }
+
+    const ADMIN: &str = "admin-token-xyz";
     fn state() -> AppState {
         AppState::new_in_memory(HostConfig {
             bind: "127.0.0.1:3721".parse().expect("valid bind"),
@@ -57,9 +303,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_admin_plugin_list_is_an_empty_placeholder() {
-        let Json(list) = plugins().await;
-        assert!(list.plugins.is_empty(), "插件装卸归 #19");
+    async fn the_admin_plugin_list_is_empty_when_nothing_is_supervised() {
+        let Json(list) = plugins(State(state())).await.expect("empty store reads ok");
+        assert!(list.plugins.is_empty());
     }
 
     #[test]
@@ -67,5 +313,34 @@ mod tests {
         for route in ADMIN_ROUTES {
             assert!(route.path.starts_with("/admin"), "{}", route.path);
         }
+    }
+
+    // --- 管理 token 鉴权（独立于操作 token，#23）---
+
+    #[test]
+    fn the_admin_token_header_is_the_one_auth_scheme_advertises() {
+        assert_eq!(ADMIN_TOKEN_HEADER.as_str(), "x-farm-admin-token");
+    }
+
+    #[test]
+    fn the_admin_token_header_is_accepted() {
+        let headers = headers_with(&[("x-farm-admin-token", ADMIN)]);
+        assert!(admin_token_matches(&headers, ADMIN));
+    }
+
+    #[test]
+    fn a_missing_or_wrong_admin_token_is_rejected() {
+        assert!(!admin_token_matches(&HeaderMap::new(), ADMIN));
+        let wrong = headers_with(&[("x-farm-admin-token", "nope")]);
+        assert!(!admin_token_matches(&wrong, ADMIN));
+        let empty = headers_with(&[("x-farm-admin-token", "")]);
+        assert!(!admin_token_matches(&empty, ADMIN));
+    }
+
+    #[test]
+    fn the_admin_token_on_the_op_token_header_is_not_counted() {
+        // 两个 header 不是同一个：管理 token 递在 op header 上不算命中管理面。
+        let headers = headers_with(&[("x-farm-token", ADMIN)]);
+        assert!(!admin_token_matches(&headers, ADMIN));
     }
 }
