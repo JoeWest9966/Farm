@@ -22,6 +22,7 @@ fn sample(concurrency: u32) -> WorkflowConfig {
         projection: ProjectionSwitches {
             open_pr: true,
             close_issue: false,
+            ..Default::default()
         },
     }
 }

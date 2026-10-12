@@ -134,6 +134,7 @@ fn validate_accepts_a_structurally_sound_config_directly() {
         projection: ProjectionSwitches {
             open_pr: false,
             close_issue: false,
+            ..Default::default()
         },
     };
     assert!(validate(&config).is_ok());

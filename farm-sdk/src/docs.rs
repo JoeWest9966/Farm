@@ -18,6 +18,10 @@ use crate::handshake::{
     CONTRACT_MAJOR, CONTRACT_PREFIX, CONTRACT_VERSION, HANDSHAKE_PATH, HOST_VERSION,
 };
 use crate::routes::{AdminRouteSpec, RouteSpec, ADMIN_ROUTES, CONTRACT_ROUTES};
+use crate::workflow::{
+    EffectiveSource, LastKnownGoodInfo, ProjectionSwitches, RetryBackoff, WorkflowConfig,
+    WorkflowConfigStatus,
+};
 use crate::services::ServiceName;
 use crate::services::agent_runner::{AbortRequest, AttemptState, DispatchRequest, DispatchResponse, SteerRequest};
 use crate::services::events::{EventHistoryQuery, EventHistoryResponse};
@@ -90,6 +94,12 @@ fn named_type_schemas() -> Vec<(&'static str, serde_json::Value)> {
         ("PluginSummary", schema_value::<PluginSummary>()),
         ("AdminPluginListResponse", schema_value::<AdminPluginListResponse>()),
         ("AdminStatusResponse", schema_value::<AdminStatusResponse>()),
+        ("WorkflowConfig", schema_value::<WorkflowConfig>()),
+        ("RetryBackoff", schema_value::<RetryBackoff>()),
+        ("ProjectionSwitches", schema_value::<ProjectionSwitches>()),
+        ("EffectiveSource", schema_value::<EffectiveSource>()),
+        ("LastKnownGoodInfo", schema_value::<LastKnownGoodInfo>()),
+        ("WorkflowConfigStatus", schema_value::<WorkflowConfigStatus>()),
     ]
 }
 

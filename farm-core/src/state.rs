@@ -12,6 +12,7 @@ use crate::db::Database;
 use crate::error::CoreError;
 use crate::events::EventBus;
 use crate::migrations::{Migrator, MIGRATIONS};
+use crate::workflow::WorkflowService;
 
 /// 宿主共享状态。`Clone` 廉价（内部 `Arc`/`Clone`），可被 axum handler 广泛共享。
 #[derive(Clone)]
@@ -19,6 +20,8 @@ pub struct AppState {
     pub config: Arc<HostConfig>,
     pub db: Database,
     pub events: EventBus,
+    /// Workflow 配置装载 + last-known-good（ticket #12；查询 API 的数据源）。
+    pub workflow: WorkflowService,
 }
 
 impl AppState {
@@ -26,10 +29,12 @@ impl AppState {
     pub fn new(config: HostConfig) -> Result<Self, CoreError> {
         let db = Database::open(&config.db_path)?;
         db.migrate(&Migrator::new(MIGRATIONS))?;
+        let events = EventBus::new();
         Ok(Self {
             config: Arc::new(config),
+            workflow: WorkflowService::new(db.clone(), events.clone()),
             db,
-            events: EventBus::new(),
+            events,
         })
     }
 
@@ -37,10 +42,12 @@ impl AppState {
     pub fn new_in_memory(config: HostConfig) -> Result<Self, CoreError> {
         let db = Database::open_in_memory()?;
         db.migrate(&Migrator::new(MIGRATIONS))?;
+        let events = EventBus::new();
         Ok(Self {
             config: Arc::new(config),
+            workflow: WorkflowService::new(db.clone(), events.clone()),
             db,
-            events: EventBus::new(),
+            events,
         })
     }
 }

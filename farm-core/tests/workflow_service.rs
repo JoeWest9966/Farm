@@ -8,6 +8,7 @@ use farm_core::db::Database;
 use farm_core::events::EventBus;
 use farm_core::migrations::{Migrator, MIGRATIONS};
 use farm_core::workflow::service::{LoadOutcome, WorkflowService};
+use farm_core::{AppState, HostConfig};
 use farm_sdk::events::EventKind;
 use farm_sdk::workflow::EffectiveSource;
 use std::fs;
@@ -170,4 +171,28 @@ fn needs_attention_alerts_carry_the_workflow_actor() {
     let env = rx.try_recv().expect("alert on bus");
     assert_eq!(env.kind, EventKind::NeedsAttention);
     assert_eq!(env.actor, "workflow", "告警 actor 稳定，供面板/通知过滤");
+}
+
+#[test]
+fn app_state_exposes_a_wired_workflow_handle() {
+    // ticket #12 共享文件要求：AppState 带 workflow 句柄，new / new_in_memory 都构造。
+    let state = AppState::new_in_memory(HostConfig {
+        bind: "127.0.0.1:3721".parse().expect("bind"),
+        op_token: "t".into(),
+        admin_token: None,
+        db_path: std::env::temp_dir().join("farm-appstate-workflow-test.db"),
+    })
+    .expect("in-memory state");
+
+    let repo = tempfile::tempdir().expect("repo");
+    write_config(repo.path(), VALID);
+    let outcome = state
+        .workflow
+        .load_repo("repo-a", repo.path())
+        .expect("load via AppState handle");
+    assert!(matches!(outcome, LoadOutcome::Applied(_)));
+
+    let status = state.workflow.status("repo-a").expect("status via AppState handle");
+    assert_eq!(status.source, Some(EffectiveSource::Fresh));
+    assert!(status.effective.is_some());
 }

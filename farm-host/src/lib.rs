@@ -21,6 +21,7 @@ pub mod contract;
 pub mod error;
 pub mod events_ws;
 pub mod panel;
+pub mod workflow;
 
 use axum::middleware;
 use axum::routing::{get, post};
@@ -71,6 +72,7 @@ pub fn build_router(state: AppState) -> Router {
         let endpoint = match (route.method, route.path) {
             ("GET", "/admin/plugins") => get(admin::plugins),
             ("GET", "/admin/status") => get(admin::status),
+            ("GET", "/admin/workflow/config/{repo_id}") => get(workflow::config_status),
             _ => panic!(
                 "ADMIN_ROUTES 里的 {} {} 未在 farm-host 挂载",
                 route.method, route.path
