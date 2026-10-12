@@ -36,6 +36,12 @@ Farm 宿主进程的运行时形态未定：谁 spawn 并监督 pi agent 子进�
 ## 考虑过的替代方案
 
 - **委托 Sentry/Slaveholder 管 agent 进程**——被否：Sentry 自己声明不做执行编排，Slaveholder 零代码；委托会把活性真相源推出 Farm，观测面分裂（与 ADR 0001 否决 Crossline 当 agent-runner 同一理由）。
+
+  > **修订（2026-10-12，据 [ADR-0006](0006-agent-runner-backend-seam.md) 显式推翻，非静默覆盖）**：本条否决的两个理由均已失效或已解，其内核则被重新确认。
+  > ① 「Slaveholder 零代码」——前提已败，Slaveholder 正在开发为通用监工工具。
+  > ② 「委托会把活性真相源推出 Farm、观测面分裂」——契约模式下不分裂：外部进程只做事件生产者，经映射表汇入 Farm 事件总线（Orchestrator 先例；远程后端 #28 的 Crossline 11 事件闭集映射同一形状）。分裂只发生在无映射表、无统一回流时。**被推出 Farm 的只是「监督者进程活着没有」（= 后端健康），不是「attempt 活着没有」——attempt 活性仍由 Farm 自己的观测推导。**
+  > ③ **维持的内核**：ADR-0004 裁决 1「agent-runner 自 spawn、自监督」作为**本地后端**的属性不动。单二进制部署（ADR-0003）不许 Farm 主路径依赖外部二进制；Slaveholder 判据数值零运行时实测且两仓 pi 版本偏斜（1.0.2 vs 0.84.3），`report-nous-family.md:319` 已裁「只能借结构，不能借数值」。
+  > ④ 结果：Farm 自持一份 Rust 判据阶梯实现（#16），并承认别处依法可有第二份（Slaveholder 实现）——规格单一源在 Slaveholder 判据学 ADR 的结构层，双实现以一份 fake pi 场景集 + 一份与后端无关的一致性套件互认。Slaveholder 以**委托后端**身份填 agent-runner 可插后端位的第三槽，槽位开放、开票设两道门（#11 合入 + #26 契约冻结；接口快照两仓共同锁定）。
 - **Kron 兼任持久化层**——被否：Kron ADR 0003 承诺「只回看不重演」，编排状态从事件流投影等于让账本做它明确不做的事。
 - **Farm 自建事件账**——被否：Kron 五命令全实现、全测试绿、契约字段级冻结，重写是纯重复建设。
 - **Farm 维护自己的凭据库**——被否：违反「兄弟仓库保持独立」，重复 Warehouse，且制造第二个机密落盘点。
