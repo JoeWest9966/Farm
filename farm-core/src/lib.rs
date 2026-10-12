@@ -12,6 +12,7 @@ pub mod error;
 pub mod events;
 pub mod migrations;
 pub mod state;
+pub mod workflow;
 
 pub use config::HostConfig;
 pub use db::{AppliedMigration, Database};
