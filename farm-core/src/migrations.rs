@@ -1,8 +1,14 @@
 //! 版本化顺序 migration runner（ADR-0005 §7）。
 //!
 //! 全局单库、顺序 migration：版本号严格升序，已落地的跳过，未落地的一次一条事务。
-//! 服务域表（票快照、attempts、事件日志、workspace 映射、覆盖层、通知通道配置）
-//! **不在这里**——归各服务票各自追加，追加即加法演进。
+//!
+//! 组织（按五服务分域，ADR-0005 §5；先例由 #13 建立）：服务域表的 SQL 住在各服务
+//! 自己的 `farm-core/src/<service>/migrations.rs`，本文件只是**版本登记表**
+//! （`up: tracker::migrations::v3_...`）。早期票（#12/#14）曾内联其 SQL，保留原样。
+//!
+//! 版本分配（集成分支上协调）：#11 = v1 host_meta；#12 workflow LKG = v2；
+//! #13 tracker 票快照/状态历史 = v3；#14 workspace 映射 = v4；#15 事件日志 = v5；
+//! #16 attempts = v6。只准追加、不准改历史版本；合并时按版本升序重排。
 
 use rusqlite::Connection;
 
@@ -106,12 +112,9 @@ fn v4_workspace_mapping(conn: &Connection) -> rusqlite::Result<()> {
     )
 }
 
-/// 骨架 migration 集：只建 runner 自己的工作表与一张宿主级 key/value 表。
-/// 服务域表由各服务票追加（加法演进，不改历史版本）。
+/// 骨架 migration 集：runner 自己的工作表 + 宿主级 key/value 表 + 各服务域表。
 ///
-/// 版本分配（spec 指派，避免并行分支撞号）：#11 = v1；#12 workflow LKG = v2；
-/// #13 tracker = v3；#14 workspace = v4；#15 事件日志 = v5；#16 attempts = v6。
-/// 合并到集成分支时按版本升序重排（`Migrator::validate` 强制严格升序）。
+/// v3 的 SQL 住 [`crate::tracker::migrations`]（按五服务分域）；v2/v4 为早期内联，保留原样。
 pub const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 1,
@@ -122,6 +125,11 @@ pub const MIGRATIONS: &[Migration] = &[
         version: 2,
         name: "workflow_config_lkg",
         up: v2_workflow_config_lkg,
+    },
+    Migration {
+        version: 3,
+        name: "tracker_issue_snapshot",
+        up: crate::tracker::migrations::v3_tracker_issue_snapshot,
     },
     Migration {
         version: 4,

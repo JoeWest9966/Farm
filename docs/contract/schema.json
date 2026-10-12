@@ -141,7 +141,7 @@
     },
     "ClaimResponse": {
       "additionalProperties": false,
-      "description": "原子 claim 结果。",
+      "description": "原子 claim 结果。\n\n`claimed` 是**成功投影**：抢到（含同一 assignee 的幂等重claim）恒为 `true`。\n未抢到的调用方收到的是闭集 `conflict` 错误信封（409），`details.holder`\n是当前持有者——GLOSSARY：失败即已被他人抢走。",
       "properties": {
         "claimed": {
           "description": "true = claim 成功；false = 已被他人持有（调用方收到 `conflict` 语义）。",
@@ -649,13 +649,27 @@
     },
     "IssueView": {
       "additionalProperties": false,
-      "description": "归一化后的票视图（面板与编排器读同一个视图——tracker 是总线）。",
+      "description": "归一化后的票视图（面板与编排器读同一个视图——tracker 是总线）。\n\nblocking 边是**原语**（ADR-0001 决策 3）：服务只陈述「谁堵谁」，\ndispatchable / frontier 的计算归编排器。",
       "properties": {
         "assignee": {
           "type": [
             "string",
             "null"
           ]
+        },
+        "blocked_by": {
+          "description": "堵住本票的票（provider 原生依赖的声明方向）。加法字段，老客户端忽略即可。",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "blocking": {
+          "description": "被本票堵住的票（反向，从全量边集推导）。加法字段。",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "issue_id": {
           "type": "string"

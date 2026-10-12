@@ -12,6 +12,7 @@ use crate::db::Database;
 use crate::error::CoreError;
 use crate::events::EventBus;
 use crate::migrations::{Migrator, MIGRATIONS};
+use crate::tracker::{NativeAdapter, TrackerService};
 use crate::workflow::WorkflowService;
 use crate::workspace::WorkspaceService;
 
@@ -21,6 +22,10 @@ pub struct AppState {
     pub config: Arc<HostConfig>,
     pub db: Database,
     pub events: EventBus,
+    /// Tracker 服务句柄（#13）：归一化视图 + 原子 claim 的唯一入口。
+    ///
+    /// 面板与编排器都经契约路由打到这同一个句柄——tracker 是总线。
+    pub tracker: TrackerService,
     /// Workflow 配置装载 + last-known-good（ticket #12；查询 API 的数据源）。
     pub workflow: WorkflowService,
     /// Workspace 服务句柄（#14，加法追加）：持有 spec↔集成分支↔worktree 映射。
@@ -35,6 +40,7 @@ impl AppState {
         let events = EventBus::new();
         Ok(Self {
             config: Arc::new(config),
+            tracker: default_tracker(&db),
             workflow: WorkflowService::new(db.clone(), events.clone()),
             workspace: WorkspaceService::new(db.clone()),
             db,
@@ -49,12 +55,20 @@ impl AppState {
         let events = EventBus::new();
         Ok(Self {
             config: Arc::new(config),
+            tracker: default_tracker(&db),
             workflow: WorkflowService::new(db.clone(), events.clone()),
             workspace: WorkspaceService::new(db.clone()),
             db,
             events,
         })
     }
+}
+
+/// 默认 Tracker 服务：native adapter（v1 唯一的 provider），启动时无 authored 票。
+///
+/// 票源由宿主管理面（#23）或测试夹具注入：换 provider = 换 adapter，服务与契约不动。
+fn default_tracker(db: &Database) -> TrackerService {
+    TrackerService::new(db.clone(), std::sync::Arc::new(NativeAdapter::empty()))
 }
 
 impl std::fmt::Debug for AppState {

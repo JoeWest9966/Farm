@@ -10,8 +10,10 @@ use axum::extract::{MatchedPath, State};
 use axum::http::{Method, Uri};
 use axum::Json;
 use farm_core::AppState;
+use farm_sdk::events::NewEvent;
+use farm_sdk::services::tracker::{ClaimRequest, ClaimResponse, IssueListResponse, IssueView};
 use farm_sdk::{
-    is_compatible, ContractError, HandshakeRequest, HandshakeResponse, ADMIN_PREFIX,
+    is_compatible, ContractError, EventKind, HandshakeRequest, HandshakeResponse, ADMIN_PREFIX,
     CONTRACT_PREFIX, CONTRACT_VERSION, HANDSHAKE_PATH, HOST_VERSION,
 };
 
@@ -42,6 +44,59 @@ pub async fn handshake(
     }
 
     Ok(Json(HandshakeResponse::for_host(HOST_VERSION)))
+}
+
+/// `GET /v1/tracker/issues`：归一化 Issue 视图（ticket #13 打通）。
+///
+/// 面板与编排器读**同一个**视图——tracker 是总线。视图含原生 blocking 边
+/// （原语；frontier/dispatchable 的计算归编排器，ADR-0001 决策 3）。
+pub async fn tracker_issues(
+    State(state): State<AppState>,
+) -> Result<Json<IssueListResponse>, ApiError> {
+    let issues = state.tracker.issues().map_err(ApiError::from)?;
+    let views: Vec<IssueView> = issues.iter().map(|issue| issue.to_view()).collect();
+    Ok(Json(IssueListResponse { issues: views }))
+}
+
+/// `POST /v1/tracker/claims`：原子 claim（ticket #13 打通）。
+///
+/// CAS 语义，assignee 即 claim：抢到 → 200 + [`ClaimResponse`]；已被他人持有 →
+/// 闭集 `conflict`（409，`details.holder` 指名当前持有者）；同一 assignee 重复
+/// claim → 幂等 200（GLOSSARY：claim 是票据状态，不是技术锁）。
+pub async fn tracker_claims(
+    State(state): State<AppState>,
+    body: Bytes,
+) -> Result<Json<ClaimResponse>, ApiError> {
+    let request: ClaimRequest = serde_json::from_slice(&body).map_err(|e| {
+        ApiError(ContractError::invalid_request(format!(
+            "malformed claim request: {e}"
+        )))
+    })?;
+    if request.issue_id.trim().is_empty() || request.assignee.trim().is_empty() {
+        return Err(ApiError(ContractError::invalid_request(
+            "claim requires a non-empty issue_id and assignee",
+        )));
+    }
+
+    let (claimed, outcome) = state
+        .tracker
+        .claim_with_outcome(&request.issue_id, &request.assignee)
+        .map_err(ApiError::from)?;
+
+    // 真正抢到才投影：幂等重claim 不是新事实（闭集里的 claim_acquired）。
+    if outcome == farm_core::tracker::ClaimOutcome::Acquired {
+        state.events.publish(
+            NewEvent::new(EventKind::ClaimAcquired, "tracker")
+                .with_ticket(&request.issue_id)
+                .with_payload(serde_json::json!({ "assignee": request.assignee })),
+        );
+    }
+
+    Ok(Json(ClaimResponse {
+        issue_id: claimed.issue_id,
+        claimed: true,
+        holder: claimed.assignee,
+    }))
 }
 
 /// 占位路由的统一回答：路由已占位、服务未实现（闭集 `not_implemented` / 501）。
