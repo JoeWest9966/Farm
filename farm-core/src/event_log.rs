@@ -41,6 +41,7 @@ pub const MAX_HISTORY_LIMIT: usize = 1_000;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct EventLogFilter {
     /// RFC3339 下界（含）：只回 `occurred_at >= since` 的事件。
+    /// 任意 RFC3339 形状都收（带偏移量/亚秒精度），[`EventLog::history`] 会先归一。
     pub since: Option<String>,
     /// 事件种类（闭集成员）。
     pub kind: Option<EventKind>,
@@ -150,7 +151,7 @@ impl EventLog {
         conn: &Connection,
         filter: &EventLogFilter,
     ) -> Result<EventHistoryResponse, CoreError> {
-        let (where_sql, params) = where_clause(filter);
+        let (where_sql, params) = where_clause(filter)?;
 
         // 先取最近 N 条（倒序查、正序回），再反推「还有没有更旧的」。
         let mut sql =
@@ -171,7 +172,7 @@ impl EventLog {
         }
         events.reverse(); // 升序：面板时间线与 WS 快照同一方向
 
-        let (where_sql, params) = where_clause(filter);
+        let (where_sql, params) = where_clause(filter)?;
         let matched: i64 = conn.query_row(
             &format!("SELECT COUNT(*) FROM {EVENTS_TABLE}{where_sql}"),
             params_from(&params),
@@ -259,12 +260,18 @@ fn stored_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredEvent> {
 type Param = Box<dyn rusqlite::ToSql>;
 
 /// 由过滤条件拼 WHERE 子句与参数（编号占位符按追加顺序生成）。
-fn where_clause(filter: &EventLogFilter) -> (String, Vec<Param>) {
+///
+/// `since` 在这里归一成宿主写入的时间戳形状（UTC、秒级）：字典序才等于时间序。
+fn where_clause(filter: &EventLogFilter) -> Result<(String, Vec<Param>), CoreError> {
     let mut sql = String::from(" WHERE 1=1");
     let mut params: Vec<Param> = Vec::new();
     if let Some(since) = &filter.since {
+        let canonical =
+            canonical_timestamp(since).ok_or_else(|| CoreError::InvalidFilter(format!(
+                "since must be an RFC3339 timestamp, got {since:?}"
+            )))?;
         sql.push_str(" AND occurred_at >= ?");
-        params.push(Box::new(since.clone()));
+        params.push(Box::new(canonical));
     }
     if let Some(kind) = &filter.kind {
         sql.push_str(" AND kind = ?");
@@ -274,7 +281,7 @@ fn where_clause(filter: &EventLogFilter) -> (String, Vec<Param>) {
         sql.push_str(" AND ticket_id = ?");
         params.push(Box::new(ticket_id.clone()));
     }
-    (sql, params)
+    Ok((sql, params))
 }
 
 fn params_from(params: &[Param]) -> impl rusqlite::Params + '_ {
