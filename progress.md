@@ -18,7 +18,7 @@ TDD 红→绿，竖切片，每片一次 checkpoint commit。
 | token 流式记账 | pending | 绝对累计、宁少报不虚报、`parentToolCallId` 嵌套用量 |
 | disposition 回流 | pending | `prompt/steer/follow_up` 响应 disposition 进事件总线 |
 | settle 期注入推迟 | pending | fake pi 模拟 `_deferredSettledActions` |
-| attempts 持久化（migration v6） | pending | running/succeeded/failed/interrupted + token 快照 + accounting_truncated |
+| attempts 持久化（migration v6） | done | `agent_runner::migrations::v6_agent_runner_attempts` + `store::AttemptStore` | running/succeeded/failed/interrupted + token 快照 + accounting_truncated |
 | 宿主三条路由 | pending | /v1/agent-runner/{dispatches,steer,abort} |
 | 真 pi 冒烟 | pending | 记录版本偏差，不断言失败 |
 
@@ -64,6 +64,15 @@ TDD 红→绿，竖切片，每片一次 checkpoint commit。
     `compaction_end`；`message_update` 的累积快照**不入账**。
   - 测试：`ladder.rs` 内 15 条单测，全绿。
 
+- **slice 3（attempts 持久化 v6）** `feat(agent-runner): attempts 表（migration v6）+ 宿主私有存储`
+  - `migrations.rs`：`v6_agent_runner_attempts`，SQL 住在服务域（per-service pattern，同 #13）。
+    `state` 闭集 `running/succeeded/failed/interrupted` 由 `CHECK` 在存储层把门。
+  - `store.rs`：`AttemptStore`（upsert/find/list/list_for_ticket/has_running_for_ticket）+
+    `mark_running_as_interrupted`（崩溃恢复：running → interrupted + accounting_truncated=1，
+    最后快照原样保留；终态 attempt 不动；幂等）。
+  - 契约态 ↔ 持久态映射：`Settled→succeeded`、`Aborted→failed`（原因进 `note`）。
+  - 测试：migrations 2 条 + store 7 条，全绿。
+
 ## 剩余（remaining）
 
-accounting 接线 → store(v6) → service → credentials 接线 → 宿主路由 → 真 pi 冒烟。
+service（process+ladder+accounting+disposition+fork）→ credentials 接线 → 宿主路由 → 真 pi 冒烟。

@@ -174,4 +174,9 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "event_log",
         up: v5_event_log,
     },
+    Migration {
+        version: 6,
+        name: "agent_runner_attempts",
+        up: crate::agent_runner::migrations::v6_agent_runner_attempts,
+    },
 ];
