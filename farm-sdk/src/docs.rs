@@ -12,7 +12,8 @@ use serde::Serialize;
 
 use crate::admin::{
     AdminPluginListResponse, AdminStatusResponse, PluginState, PluginSummary,
-    TrackerProviderConfig, TrackerProviderSelection,
+    ServiceControlStatus, ServiceControlStatusEntry, ServiceRunState, TrackerProviderConfig,
+    TrackerProviderSelection,
 };
 use crate::control::{TickControlRequest, TickControlStatus, TickState};
 use crate::error::{ContractError, ErrorCode};
@@ -127,6 +128,9 @@ fn named_type_schemas() -> Vec<(&'static str, serde_json::Value)> {
         ("AdminStatusResponse", schema_value::<AdminStatusResponse>()),
         ("TrackerProviderConfig", schema_value::<TrackerProviderConfig>()),
         ("TrackerProviderSelection", schema_value::<TrackerProviderSelection>()),
+        ("ServiceRunState", schema_value::<ServiceRunState>()),
+        ("ServiceControlStatus", schema_value::<ServiceControlStatus>()),
+        ("ServiceControlStatusEntry", schema_value::<ServiceControlStatusEntry>()),
         ("WorkflowConfig", schema_value::<WorkflowConfig>()),
         ("RetryBackoff", schema_value::<RetryBackoff>()),
         ("ProjectionSwitches", schema_value::<ProjectionSwitches>()),

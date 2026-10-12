@@ -19,6 +19,7 @@ pub mod migrations;
 pub mod overlay;
 pub mod plugin;
 pub mod recovery;
+pub mod service_control;
 pub mod state;
 pub mod tracker;
 pub mod workspace;
@@ -27,6 +28,7 @@ pub mod workflow;
 pub use audit::{AuditSink, AuditOutcome};
 pub use config::HostConfig;
 pub use control::TickControl;
+pub use service_control::ServiceControl;
 pub use db::{AppliedMigration, Database};
 pub use error::CoreError;
 pub use event_log::{EventLog, EventLogFilter};
@@ -40,8 +42,7 @@ pub use plugin::{
     reconcile_on_startup as reconcile_plugins_on_startup, PluginError, PluginHello, PluginHost,
     PluginProcess, PluginSpec, PluginState, PluginStatus, PluginStore,
 };
-pub use state::AppState;
-pub use tracker::{Issue, IssueState, TrackerError, TrackerService};
+pub use state::AppState;pub use tracker::{Issue, IssueState, TrackerError, TrackerService};
 pub use workspace::{
     EstablishRequest, MappingRow, MappingStatus, ReconcileReport, WorkspaceError, WorkspaceService,
 };

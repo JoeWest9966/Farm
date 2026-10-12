@@ -95,3 +95,58 @@ pub struct AdminStatusResponse {
     pub bind_addr: String,
     pub services: Vec<crate::services::ServiceName>,
 }
+
+/// 服务的运行态（宿主管理面「服务启停」，ticket #23）：二值闭集。
+///
+/// 与 [`PluginState`] 三态闭集**不同**：服务是宿主自身的五服务（ADR-0001），没有
+/// quarantined 语义（那是插件进程崩溃重试耗尽的状态，GLOSSARY「隔离」）。
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceRunState {
+    /// 运行中（默认；宿主启动即五服务俱在）。
+    Running,
+    /// 被人经管理面停机（易失宿主持有开关，重启后回到 running）。
+    Stopped,
+}
+
+impl ServiceRunState {
+    /// 闭集的权威清单。
+    pub const ALL: [ServiceRunState; 2] = [ServiceRunState::Running, ServiceRunState::Stopped];
+
+    /// 契约 / 存储里出现的字符串形式。
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ServiceRunState::Running => "running",
+            ServiceRunState::Stopped => "stopped",
+        }
+    }
+
+    /// 从 wire 字符串解析（未知态返回 `None`：不猜）。
+    pub fn parse(text: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|state| state.as_str() == text)
+    }
+}
+
+impl std::fmt::Display for ServiceRunState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// 单个服务的启停状态（宿主管理面投影，ticket #23）。
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ServiceControlStatusEntry {
+    pub service: crate::services::ServiceName,
+    pub state: ServiceRunState,
+    /// 最近一次启停切换时间（RFC3339；从未切过则为 `None`）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+/// 服务启停控制面的当前状态（`GET /admin/services` 响应；五服务俱全）。
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ServiceControlStatus {
+    pub services: Vec<ServiceControlStatusEntry>,
+}

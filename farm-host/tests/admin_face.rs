@@ -394,3 +394,114 @@ async fn the_tracker_provider_route_is_guarded_by_the_admin_token() {
         .expect("oneshot");
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }
+
+// ---------------------------------------------------------------------------
+// 服务启停：GET /admin/services + POST /admin/services/{name}/stop|start
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn the_service_control_status_lists_all_five_services_running() {
+    let app = admin_app();
+    let response = app
+        .oneshot(admin_request(Method::GET, "/admin/services", Some(ADMIN_TOKEN)))
+        .await
+        .expect("oneshot");
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.expect("body");
+    let status: farm_sdk::admin::ServiceControlStatus =
+        serde_json::from_slice(&bytes).expect("service status json");
+    assert_eq!(status.services.len(), 5, "ADR-0001 五服务");
+    assert!(
+        status
+            .services
+            .iter()
+            .all(|entry| entry.state == farm_sdk::admin::ServiceRunState::Running),
+        "初始五服务俱 running"
+    );
+}
+
+#[tokio::test]
+async fn stopping_a_service_through_the_admin_api_flips_only_that_service() {
+    let app = admin_app();
+    // 停机 tracker。
+    let response = app
+        .clone()
+        .oneshot(admin_post("/admin/services/tracker/stop", ADMIN_TOKEN))
+        .await
+        .expect("oneshot");
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.expect("body");
+    let entry: farm_sdk::admin::ServiceControlStatusEntry =
+        serde_json::from_slice(&bytes).expect("entry json");
+    assert_eq!(entry.service, farm_sdk::ServiceName::Tracker);
+    assert_eq!(entry.state, farm_sdk::admin::ServiceRunState::Stopped);
+
+    // 再读全量：tracker stopped，其余仍 running。
+    let response = app
+        .oneshot(admin_request(Method::GET, "/admin/services", Some(ADMIN_TOKEN)))
+        .await
+        .expect("oneshot");
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.expect("body");
+    let status: farm_sdk::admin::ServiceControlStatus =
+        serde_json::from_slice(&bytes).expect("status json");
+    let tracker = status
+        .services
+        .iter()
+        .find(|entry| entry.service == farm_sdk::ServiceName::Tracker)
+        .expect("tracker present");
+    assert_eq!(tracker.state, farm_sdk::admin::ServiceRunState::Stopped);
+    assert!(
+        status
+            .services
+            .iter()
+            .filter(|entry| entry.service != farm_sdk::ServiceName::Tracker)
+            .all(|entry| entry.state == farm_sdk::admin::ServiceRunState::Running),
+        "只停被点的那个服务"
+    );
+}
+
+#[tokio::test]
+async fn starting_a_stopped_service_returns_it_to_running() {
+    let app = admin_app();
+    app.clone()
+        .oneshot(admin_post("/admin/services/merge/stop", ADMIN_TOKEN))
+        .await
+        .expect("stop");
+    let response = app
+        .oneshot(admin_post("/admin/services/merge/start", ADMIN_TOKEN))
+        .await
+        .expect("oneshot");
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.expect("body");
+    let entry: farm_sdk::admin::ServiceControlStatusEntry =
+        serde_json::from_slice(&bytes).expect("entry json");
+    assert_eq!(entry.state, farm_sdk::admin::ServiceRunState::Running);
+}
+
+#[tokio::test]
+async fn controlling_an_unknown_service_is_invalid_request() {
+    let app = admin_app();
+    let response = app
+        .oneshot(admin_post("/admin/services/nope/stop", ADMIN_TOKEN))
+        .await
+        .expect("oneshot");
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(closed_set_error(response).await.code, ErrorCode::InvalidRequest);
+}
+
+#[tokio::test]
+async fn the_service_control_route_is_guarded_by_the_admin_token() {
+    let app = admin_app();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/admin/services")
+                .header("x-farm-token", OP_TOKEN)
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("oneshot");
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}

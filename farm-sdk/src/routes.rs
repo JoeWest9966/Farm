@@ -139,6 +139,21 @@ pub const ADMIN_ROUTES: &[AdminRouteSpec] = &[
     },
     AdminRouteSpec {
         method: "GET",
+        path: "/admin/services",
+        summary: "五服务启停状态（服务启停控制面，#23）",
+    },
+    AdminRouteSpec {
+        method: "POST",
+        path: "/admin/services/{name}/stop",
+        summary: "停机一个服务（服务启停，#23；宿主持有开关，发 needs_attention）",
+    },
+    AdminRouteSpec {
+        method: "POST",
+        path: "/admin/services/{name}/start",
+        summary: "启动一个服务（服务启停，#23）",
+    },
+    AdminRouteSpec {
+        method: "GET",
         path: "/admin/workflow/config/{repo_id}",
         summary: "查询某被编排仓库当前生效的 workflow 配置与 LKG 状态（ticket #12）",
     },

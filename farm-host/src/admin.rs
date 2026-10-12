@@ -22,8 +22,8 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use farm_core::AppState;
 use farm_sdk::admin::{
-    AdminPluginListResponse, AdminStatusResponse, PluginSummary, TrackerProviderConfig,
-    TrackerProviderSelection,
+    AdminPluginListResponse, AdminStatusResponse, PluginSummary, ServiceControlStatus,
+    ServiceControlStatusEntry, TrackerProviderConfig, TrackerProviderSelection,
 };
 use farm_sdk::{AuthScheme, ContractError, ServiceName, CONTRACT_VERSION, HOST_VERSION};
 
@@ -173,6 +173,55 @@ fn current_tracker_config(state: &AppState) -> Result<TrackerProviderConfig, Api
         provider,
         known_providers,
     })
+}
+
+/// `GET /admin/services`：五服务启停状态（服务启停控制面）。
+///
+/// 读源是 [`farm_core::AppState::service_control`]（宿主持有易失开关；未显式设过 → running）。
+pub async fn services(
+    State(state): State<AppState>,
+) -> Result<Json<ServiceControlStatus>, ApiError> {
+    Ok(Json(state.service_control.status().map_err(ApiError::from)?))
+}
+
+/// `POST /admin/services/{name}/stop`：停机一个服务（宿主持有开关 + 发 `needs_attention`）。
+pub async fn stop_service(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<ServiceControlStatusEntry>, ApiError> {
+    let service = parse_service(&name)?;
+    Ok(Json(
+        state
+            .service_control
+            .stop(&state, service, "admin")
+            .map_err(ApiError::from)?,
+    ))
+}
+
+/// `POST /admin/services/{name}/start`：启动一个服务。
+pub async fn start_service(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<ServiceControlStatusEntry>, ApiError> {
+    let service = parse_service(&name)?;
+    Ok(Json(
+        state
+            .service_control
+            .start(&state, service, "admin")
+            .map_err(ApiError::from)?,
+    ))
+}
+
+/// 路径参数 → 五服务成员（未知名 → 闭集 `invalid_request`；不猜）。
+fn parse_service(name: &str) -> Result<ServiceName, ApiError> {
+    ServiceName::ALL
+        .into_iter()
+        .find(|service| service.as_str() == name)
+        .ok_or_else(|| {
+            ApiError(ContractError::invalid_request(format!(
+                "unknown service {name:?}; known: tracker, agent-runner, merge, workspace, events"
+            )))
+        })
 }
 
 /// 插件宿主错误 → 契约闭集错误的投影。

@@ -56,6 +56,9 @@
 | GET | `/admin/status` | 宿主管理面自描述（契约版本 + 五服务） | 占位：`not_implemented` |
 | GET | `/admin/tracker/provider` | 查询当前 tracker provider / adapter 配置（adapter 选择，#23） | 占位：`not_implemented` |
 | POST | `/admin/tracker/provider` | 设置 tracker provider / adapter（adapter 选择，#23） | 占位：`not_implemented` |
+| GET | `/admin/services` | 五服务启停状态（服务启停控制面，#23） | 占位：`not_implemented` |
+| POST | `/admin/services/{name}/stop` | 停机一个服务（服务启停，#23；宿主持有开关，发 needs_attention） | 占位：`not_implemented` |
+| POST | `/admin/services/{name}/start` | 启动一个服务（服务启停，#23） | 占位：`not_implemented` |
 | GET | `/admin/workflow/config/{repo_id}` | 查询某被编排仓库当前生效的 workflow 配置与 LKG 状态（ticket #12） | 占位：`not_implemented` |
 
 ## 闭集错误码（closed-set error codes）

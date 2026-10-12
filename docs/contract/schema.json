@@ -1217,6 +1217,48 @@
       "title": "RetryBackoff",
       "type": "object"
     },
+    "ServiceControlStatus": {
+      "additionalProperties": false,
+      "description": "服务启停控制面的当前状态（`GET /admin/services` 响应；五服务俱全）。",
+      "properties": {
+        "services": {
+          "items": {
+            "$ref": "#/$defs/ServiceControlStatusEntry"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "services"
+      ],
+      "title": "ServiceControlStatus",
+      "type": "object"
+    },
+    "ServiceControlStatusEntry": {
+      "additionalProperties": false,
+      "description": "单个服务的启停状态（宿主管理面投影，ticket #23）。",
+      "properties": {
+        "service": {
+          "$ref": "#/$defs/ServiceName"
+        },
+        "state": {
+          "$ref": "#/$defs/ServiceRunState"
+        },
+        "updated_at": {
+          "description": "最近一次启停切换时间（RFC3339；从未切过则为 `None`）。",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "service",
+        "state"
+      ],
+      "title": "ServiceControlStatusEntry",
+      "type": "object"
+    },
     "ServiceName": {
       "description": "v1 五服务（闭集）。",
       "oneOf": [
@@ -1247,6 +1289,22 @@
         }
       ],
       "title": "ServiceName"
+    },
+    "ServiceRunState": {
+      "description": "服务的运行态（宿主管理面「服务启停」，ticket #23）：二值闭集。\n\n与 [`PluginState`] 三态闭集**不同**：服务是宿主自身的五服务（ADR-0001），没有\nquarantined 语义（那是插件进程崩溃重试耗尽的状态，GLOSSARY「隔离」）。",
+      "oneOf": [
+        {
+          "const": "running",
+          "description": "运行中（默认；宿主启动即五服务俱在）。",
+          "type": "string"
+        },
+        {
+          "const": "stopped",
+          "description": "被人经管理面停机（易失宿主持有开关，重启后回到 running）。",
+          "type": "string"
+        }
+      ],
+      "title": "ServiceRunState"
     },
     "SteerRequest": {
       "additionalProperties": false,
