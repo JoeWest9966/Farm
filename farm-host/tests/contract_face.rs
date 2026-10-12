@@ -258,6 +258,7 @@ async fn every_placeholder_contract_route_answers_not_implemented_with_the_op_to
                 | "/v1/agent-runner/dispatches"
                 | "/v1/agent-runner/attempts/{attempt_id}/steer"
                 | "/v1/agent-runner/attempts/{attempt_id}/abort"
+                | "/v1/merge/proposals"
         ) {
             continue;
         }
