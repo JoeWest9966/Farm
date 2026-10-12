@@ -45,3 +45,10 @@ path = "src/bin/fake-ledger.rs"
 [[bin]]
 name = "fake-plugin"
 path = "src/bin/fake-plugin.rs"
+
+# 带**真 tokio runtime** 的插件替身（#19 的冻结覆盖缺口，code review P1-open）：
+# fake-plugin 是纯 std 的，真实插件（plugin-skeleton / http-notifier）都跑自己的
+# runtime；宿主经 `tokio::process` 拉起它们时在本沙箱会冻住，这一角要能被测到。
+[[bin]]
+name = "tokio-plugin"
+path = "src/bin/tokio-plugin.rs"
