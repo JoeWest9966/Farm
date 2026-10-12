@@ -69,6 +69,8 @@
 | GET | `/admin/merge/proposals/{id}` | 单个 merge 提议详情 + diff（面板审阅呈现，#25） | 占位：`not_implemented` |
 | POST | `/admin/merge/proposals/{id}/approve` | 批准 merge 提议：记审批决策入 Kron + 跑机械闸门出 merge commit（#25） | 占位：`not_implemented` |
 | POST | `/admin/merge/proposals/{id}/reject` | 拒绝 merge 提议：记审批决策入 Kron + 闭集错误回 agent（#25） | 占位：`not_implemented` |
+| GET | `/admin/notifier/channel/{repo_id}` | 查询某被编排仓库的通知通道配置：enabled + 过滤集（GLOSSARY「通知通道」，ticket #21） | 已通：通知通道配置 view/set（#21，宿主零推送域知识） |
+| POST | `/admin/notifier/channel/{repo_id}` | 设置某被编排仓库的通知通道配置：enabled + 过滤集（重启后生效，ticket #21） | 已通：通知通道配置 view/set（#21，宿主零推送域知识） |
 
 ## 闭集错误码（closed-set error codes）
 

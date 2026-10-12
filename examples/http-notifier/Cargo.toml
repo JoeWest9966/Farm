@@ -1,0 +1,25 @@
+[package]
+name = "http-notifier"
+description = "第一方通用 HTTP Notifier 插件（ticket #21）：进程级 IPC 插件，订阅事件总线、按模板 POST 到 HTTP 端点。自决载体（URL/headers/body 模板/重试/限流全住插件侧），宿主零推送域知识。"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+license = "MIT"
+repository = "https://github.com/JoeWest9966/Farm"
+
+# 独立 workspace：插件 crate 不进 Farm workspace（ADR-0003），只靠 farm-sdk 对齐契约
+# （与 examples/plugin-skeleton 同宗）。CI 单独编译 examples/。
+[workspace]
+
+[[bin]]
+name = "http-notifier"
+path = "src/main.rs"
+
+[lib]
+name = "http_notifier"
+path = "src/lib.rs"
+
+[dependencies]
+farm-sdk = { path = "../../farm-sdk" }
+tokio = { version = "1", features = ["rt", "macros", "net", "time", "io-util", "io-std", "sync"] }
+serde_json = "1"

@@ -984,6 +984,84 @@
       "title": "NewEvent",
       "type": "object"
     },
+    "NotificationChannelConfig": {
+      "additionalProperties": false,
+      "description": "通知通道配置（per-仓库；宿主管理 API 的投影形状，migration v10 的存储面）。\n\n**宿主零推送域知识**：只有 `enabled`（总闸）+ `filter`（转哪些关键事件）+ `repo_id`\n+ `updated_at`。载体（URL/headers/body 模板/重试/限流）不住这里——那是插件侧自决\n（见模块文档）。",
+      "properties": {
+        "enabled": {
+          "description": "通道总闸：关掉后插件不外发任何事件（即便过滤集放行）。",
+          "type": "boolean"
+        },
+        "filter": {
+          "$ref": "#/$defs/NotifierFilter",
+          "description": "过滤集：四类关键事件各一个开关。"
+        },
+        "repo_id": {
+          "description": "被编排仓库 id（per-仓库 keyed，ADR-0005 §6）。",
+          "type": "string"
+        },
+        "updated_at": {
+          "description": "最近一次写入/更新时间（RFC3339；宿主张章）。",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo_id",
+        "enabled",
+        "filter",
+        "updated_at"
+      ],
+      "title": "NotificationChannelConfig",
+      "type": "object"
+    },
+    "NotificationChannelUpdate": {
+      "additionalProperties": false,
+      "description": "设置通知通道配置的请求体（宿主管理 API `POST /admin/notifier/channel/{repo_id}`）。\n\n只带 `enabled` + `filter`：`repo_id` 在路径上，`updated_at` 由宿主张章（调用方不能\n自定时间戳）。",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "filter": {
+          "$ref": "#/$defs/NotifierFilter"
+        }
+      },
+      "required": [
+        "enabled",
+        "filter"
+      ],
+      "title": "NotificationChannelUpdate",
+      "type": "object"
+    },
+    "NotifierFilter": {
+      "additionalProperties": false,
+      "description": "通知通道的过滤集：四类关键事件各一个显式开关（GLOSSARY「通知通道」默认过滤集）。\n\nwire 字符串为 snake_case，与 [`EventKind`] 的关键成员一一对应（`stall` → `stall_kill`、\n`merge_complete` → `merge`）。四个开关都是**必填**：缺席即形状不成立（与\n[`crate::overlay::OverlayEntry::temporary`] 同纪律，不猜默认）。",
+      "properties": {
+        "blocked": {
+          "description": "`blocked`：attempt 卡住、claim 保留（一等事件）。",
+          "type": "boolean"
+        },
+        "merge_complete": {
+          "description": "`merge_complete`：merge 服务执行了真正的 merge（[`EventKind::Merge`]；默认关）。",
+          "type": "boolean"
+        },
+        "needs_attention": {
+          "description": "`needs_attention`：需要人类注意（一等事件）。",
+          "type": "boolean"
+        },
+        "stall": {
+          "description": "`stall`：两口钟超时判杀（[`EventKind::StallKill`]）。",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "blocked",
+        "needs_attention",
+        "stall",
+        "merge_complete"
+      ],
+      "title": "NotifierFilter",
+      "type": "object"
+    },
     "OverlayClearRequest": {
       "additionalProperties": false,
       "description": "清除覆盖层：给 `key` 清一条，不给清该仓库全部。",

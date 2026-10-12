@@ -26,6 +26,7 @@ pub mod error;
 pub mod events;
 pub mod events_ws;
 pub mod merge;
+pub mod notifier;
 pub mod panel;
 pub mod workspace;
 pub mod workflow;
@@ -124,6 +125,8 @@ pub fn build_router(state: AppState) -> Router {
             ("GET", "/admin/merge/proposals/{id}") => get(admin::merge_proposal),
             ("POST", "/admin/merge/proposals/{id}/approve") => post(admin::approve_proposal),
             ("POST", "/admin/merge/proposals/{id}/reject") => post(admin::reject_proposal),
+            ("GET", "/admin/notifier/channel/{repo_id}") => get(notifier::channel_config),
+            ("POST", "/admin/notifier/channel/{repo_id}") => post(notifier::set_channel_config),
             _ => panic!(
                 "ADMIN_ROUTES 里的 {} {} 未在 farm-host 挂载",
                 route.method, route.path
