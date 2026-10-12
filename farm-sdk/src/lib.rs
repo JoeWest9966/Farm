@@ -19,6 +19,7 @@ pub mod events;
 pub mod handshake;
 pub mod routes;
 pub mod services;
+pub mod workflow;
 
 pub use error::{ContractError, ErrorCode};
 pub use events::{EventEnvelope, EventKind, NewEvent, WsHello};
@@ -31,6 +32,10 @@ pub use services::ServiceName;
 pub use services::agent_runner::{
     AbortRequest, AbortResponse, AttemptState, DispatchRequest, DispatchResponse, Disposition,
     SteerRequest, SteerResponse,
+};
+pub use workflow::{
+    EffectiveSource, LastKnownGoodInfo, ProjectionSwitches, RetryBackoff, WorkflowConfig,
+    WorkflowConfigStatus,
 };
 
 /// farm-sdk 的 crate 版本（与契约版本分离）。

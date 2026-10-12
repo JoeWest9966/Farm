@@ -4,21 +4,31 @@
 //! （rusqlite + WAL，ADR-0005）、版本化顺序 migration runner、内存事件总线原语。
 //!
 //! 本票（#11）只搭骨架：五服务的**实现**归 #13–#18，事件总线的服务面归 #15；
-//! 这里提供它们共同的底座。
+//! 这里提供它们共同的底座。事件总线的持久面在 [`event_log`]（ticket #15）。
 
 pub mod agent_runner;
 pub mod config;
 pub mod db;
 pub mod error;
+pub mod event_log;
 pub mod events;
 pub mod migrations;
 pub mod state;
+pub mod tracker;
+pub mod workspace;
+pub mod workflow;
 
 pub use config::HostConfig;
 pub use db::{AppliedMigration, Database};
 pub use error::CoreError;
+pub use event_log::{EventLog, EventLogFilter};
 pub use migrations::{Migration, Migrator, MIGRATIONS};
 pub use state::AppState;
+pub use tracker::{Issue, IssueState, TrackerError, TrackerService};
+pub use workspace::{
+    EstablishRequest, MappingRow, MappingStatus, ReconcileReport, WorkspaceError, WorkspaceService,
+};
+pub use workflow::WorkflowService;
 
 /// 当前 UTC 时间的 RFC3339 文本（事件时间戳 / migration applied_at）。
 ///

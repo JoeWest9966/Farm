@@ -61,19 +61,34 @@ impl EventBus {
         self.tx.receiver_count()
     }
 
-    /// 发布一条事件：宿主盖章（id / occurred_at / audited=false）后广播。
+    /// 发布一条事件：宿主盖章（id / occurred_at / audited）后广播。
     ///
     /// 没有订阅者时事件被丢弃（内存总线不是持久化；持久化归 #15）。
+    /// 宿主内的发布一律走 [`crate::AppState::publish`]（先落库再广播），
+    /// 本方法只服务「就要一条活面广播」的场景（测试、纯内存工具）。
     pub fn publish(&self, new: NewEvent) -> EventEnvelope {
+        let envelope = self.stamp(new);
+        self.broadcast(&envelope);
+        envelope
+    }
+
+    /// 盖一个信封（id / occurred_at / audited=false）但**不广播**。
+    ///
+    /// 发布路径（[`crate::AppState::publish`]）必须先落事件日志再广播，
+    /// 所以盖章与广播必须能分开（ticket #15）。
+    pub fn stamp(&self, new: NewEvent) -> EventEnvelope {
         let seq = self.seq.fetch_add(1, Ordering::Relaxed);
-        let envelope = EventEnvelope::from_new(
+        EventEnvelope::from_new(
             new,
             format!("evt-{}-{:06}", self.epoch, seq),
             now_rfc3339(),
-        );
+        )
+    }
+
+    /// 广播一个已盖章的信封。没有订阅者时事件被丢弃——这不是错误。
+    pub fn broadcast(&self, envelope: &EventEnvelope) {
         // 无订阅者时 send 返回 Err（事件被丢弃）——这不是错误。
         let _ = self.tx.send(envelope.clone());
-        envelope
     }
 }
 

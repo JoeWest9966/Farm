@@ -29,7 +29,9 @@ Farm 宿主进程的运行时形态未定：谁 spawn 并监督 pi agent 子进�
    - pi agent 子进程不是插件：归 agent-runner 判据阶梯管，不进插件重试策略。
 
 5. **pi 版本归配方钉；Farm 自身基准 = 1.0.2。**
-   运行时版本由 Warehouse recipe 的 `runtime_pins` 决定，Farm 不越权；Farm 的开发/CI/契约一致性套件基准钉 1.0.2（与 Warehouse pin 对齐，避免自家生态三版本并存）。spec 写死「换 pi 版本必重读清单」：Sentry 的 `gate_failed` 触发差异（0.84.3 fail-safe vs durable fail-closed）、`stopReason` 白名单七值、`agent_settled` 语义、事件流字段名。Sentry 在 1.0.2 上的重验是 spec 的前置任务。
+   运行时版本由 Warehouse recipe 的 `runtime_pins` 决定，Farm 不越权；Farm 的开发/CI/契约一致性套件基准钉 1.0.2（与 Warehouse pin 对齐，避免自家生态三版本并存）。spec 写死「换 pi 版本必重读清单」：Sentry 的 `gate_failed` 触发差异、`stopReason` 白名单七值、`agent_settled` 语义、事件流字段名。Sentry 在 1.0.2 上的重验是 spec 的前置任务。
+
+   > **勘误（2026-10-12，据 Sentry 在 1.0.2 上的重验实测，`docs/research/sentry-pi-1.0.2-revalidation.md` §4）**：`gate_failed` 触发差异**不是**「0.84.3 = fail-safe（放行）vs 1.x = fail-closed（拦）」——**两个版本实测都是拦下**，fail-safe 这个前提不成立。真差别在**静默**：hook 抛异常时留不留 `extension_error` 遥测、异常文本是否泄进对话。零遥测 + 文本进对话 ⇒ 外部不可区分「闸门自己崩了」与「闸门照常放行」（Pi 1.0.0 事故同一族），所以闸门的铁律是「自己失败 = fail-closed + 硬上限 + 心跳自证」，换 pi 版本要重读的也正是这一条（拦不拦 + 崩了看不看得见），不是「哪个版本放行」。
 
 ## 考虑过的替代方案
 

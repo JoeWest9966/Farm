@@ -24,6 +24,15 @@ pub enum CoreError {
     #[error("config error: {0}")]
     Config(String),
 
+    /// 事件日志里有一行不是合法的事件信封（kind 不在闭集 / payload 不是 JSON）。
+    /// 宿主绝不把它静默降级成一个假事件——闭集是契约（ADR-0001 决策 6）。
+    #[error("event log row {id} is not a contract event envelope: {detail}")]
+    CorruptEventLogRow { id: String, detail: String },
+
+    /// 查询条件不合法（如 `since` 不是 RFC3339 时间戳）。
+    #[error("invalid event log filter: {0}")]
+    InvalidFilter(String),
+
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 
@@ -45,6 +54,12 @@ impl CoreError {
                 ContractError::internal(format!("host migration set is invalid: {msg}"))
             }
             CoreError::Config(msg) => ContractError::internal(format!("host config is invalid: {msg}")),
+            CoreError::InvalidFilter(msg) => {
+                ContractError::invalid_request(format!("invalid event log filter: {msg}"))
+            }
+            CoreError::CorruptEventLogRow { id, detail } => ContractError::internal(format!(
+                "event log row {id} is not a contract event envelope: {detail}"
+            )),
             CoreError::Io(_) => ContractError::internal("host io failure"),
             CoreError::Randomness(msg) => {
                 ContractError::internal(format!("host entropy failure: {msg}"))

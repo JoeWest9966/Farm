@@ -16,6 +16,7 @@ path = "src/main.rs"
 farm-sdk = { path = "../farm-sdk" }
 farm-core = { path = "../farm-core" }
 axum.workspace = true
+serde_urlencoded.workspace = true
 tokio.workspace = true
 tower.workspace = true
 tower-http.workspace = true

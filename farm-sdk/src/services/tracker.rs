@@ -1,6 +1,8 @@
-//! Tracker 服务的占位契约形状（GLOSSARY：归一化 Issue 模型 + 原子 claim）。
+//! Tracker 服务的契约形状（GLOSSARY：归一化 Issue 模型 + 原子 claim）。
 //!
-//! #13 负责 provider adapter 与 claim 的 CAS 存储；此处只固定路由形状与信封。
+//! #13 落地 v1：provider adapter 与 claim 的 CAS 存储在 `farm-core::tracker`；
+//! 此处是契约投影——`IssueView` 带 blocking 边（原语），`POST /v1/tracker/claims`
+//! 未抢到时走闭集 `conflict`（信封 `details.holder` 指名当前持有者）。
 
 use serde::{Deserialize, Serialize};
 
@@ -19,6 +21,9 @@ pub enum IssueState {
 }
 
 /// 归一化后的票视图（面板与编排器读同一个视图——tracker 是总线）。
+///
+/// blocking 边是**原语**（ADR-0001 决策 3）：服务只陈述「谁堵谁」，
+/// dispatchable / frontier 的计算归编排器。
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct IssueView {
@@ -31,6 +36,12 @@ pub struct IssueView {
     pub assignee: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<String>,
+    /// 堵住本票的票（provider 原生依赖的声明方向）。加法字段，老客户端忽略即可。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blocked_by: Vec<String>,
+    /// 被本票堵住的票（反向，从全量边集推导）。加法字段。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blocking: Vec<String>,
 }
 
 /// `GET /v1/tracker/issues` 的响应信封（占位）。
@@ -49,6 +60,10 @@ pub struct ClaimRequest {
 }
 
 /// 原子 claim 结果。
+///
+/// `claimed` 是**成功投影**：抢到（含同一 assignee 的幂等重claim）恒为 `true`。
+/// 未抢到的调用方收到的是闭集 `conflict` 错误信封（409），`details.holder`
+/// 是当前持有者——GLOSSARY：失败即已被他人抢走。
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ClaimResponse {
