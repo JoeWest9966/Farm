@@ -321,13 +321,13 @@ impl PluginHost {
 
         let (stop_tx, stop_rx) = oneshot::channel();
         let (handshake_tx, handshake_rx) = oneshot::channel();
-        let supervisor = self.clone();
+        // 任务只持 `Arc<PluginHostInner>`（不持 PluginHost 句柄）：否则宿主最后一个句柄
+        // 被丢掉时引用计数不归零，`Drop` 的兜底强杀永远等不到。
+        let inner = Arc::clone(&self.inner);
         let host = host.clone();
         let spec_owned = spec.clone();
         let task = tokio::spawn(async move {
-            supervisor
-                .supervise(host, spec_owned, None, stop_rx, handshake_tx)
-                .await;
+            supervise(inner, host, spec_owned, None, stop_rx, handshake_tx).await;
         });
         self.inner.live.lock().await.insert(
             spec.plugin_id.clone(),
@@ -365,106 +365,107 @@ impl PluginHost {
                 plugin_id: plugin_id.to_string(),
             })
     }
+}
 
-    /// 监督循环（每插件一个任务，自持：终态已落账，没人需要 join 它）。
-    ///
-    /// ```text
-    /// spawn → hello 握手 ──成功──► 监督：select!{ 子进程退出 / 插件说话 / 停机信号 }
-    ///              │                     │
-    ///              │                     └─ 停机 ─► 关 stdin → 宽限 → 强杀 ─► stopped
-    ///              │                     └─ 自己退了（有序） ─► stopped，不重试
-    ///              │                     └─ 崩了 ─► 计数 +1 ─► 退避重试 / 隔离
-    ///              └─ 失败 ─► 计数 +1 ─► 同上
-    /// ```
-    async fn supervise(
-        &self,
-        host: AppState,
-        spec: PluginSpec,
-        mut process: Option<PluginProcess>,
-        mut stop: oneshot::Receiver<()>,
-        first_handshake: oneshot::Sender<Result<PluginHello, PluginError>>,
-    ) {
-        // 只有**第一次**握手结果要回给调用方（launch/recover 的同步答案）。
-        let mut first_handshake = Some(first_handshake);
-        let plugin_id = spec.plugin_id.clone();
-        loop {
-            if process.is_none() {
-                match PluginProcess::spawn(&spec).await {
-                    Ok(spawned) => process = Some(spawned),
-                    Err(e) => {
-                        let reason = e.to_string();
-                        if let Some(tx) = first_handshake.take() {
-                            let _ = tx.send(Err(e));
-                        }
-                        if !self.on_crash(&host, &spec, &reason).await {
-                            break;
-                        }
-                        continue;
-                    }
-                }
-            }
-            let mut child = process.take().expect("a live child was just ensured");
-            match child.handshake().await {
-                Ok(hello) => {
-                    if let Some(tx) = first_handshake.take() {
-                        let _ = tx.send(Ok(hello.clone()));
-                    }
-                    self.on_handshake(&spec, &hello, child.pid());
-                    let outcome = loop {
-                        let outcome = tokio::select! {
-                            status = child.child.wait() => Supervision::Exited(status.ok()),
-                            Some(_line) = child.lines.recv() => Supervision::Chatter,
-                            _ = &mut stop => Supervision::StopRequested,
-                        };
-                        if matches!(outcome, Supervision::Chatter) {
-                            continue;
-                        }
-                        break outcome;
-                    };
-                    match outcome {
-                        Supervision::StopRequested => {
-                            self.shutdown_plugin(&spec, child).await;
-                            break;
-                        }
-                        Supervision::Exited(Some(status)) if status.success() => {
-                            // 插件自己退了（有序停机或自愿退出）：不重试、不升级。
-                            self.on_voluntary_exit(&spec, &status);
-                            break;
-                        }
-                        Supervision::Exited(status) => {
-                            let reason = match status {
-                                Some(status) => format!("exited with {status}"),
-                                None => "exited without a status".to_string(),
-                            };
-                            drop(child);
-                            if !self.on_crash(&host, &spec, &reason).await {
-                                break;
-                            }
-                        }
-                        Supervision::Chatter => unreachable!("chatter loops above"),
-                    }
-                }
+/// 监督循环（每插件一个任务，自持：终态已落账，没人需要 join 它）。
+///
+/// ```text
+/// spawn → hello 握手 ──成功──► 监督：select!{ 子进程退出 / 插件说话 / 停机信号 }
+///              │                     │
+///              │                     └─ 停机 ─► 关 stdin → 宽限 → 强杀 ─► stopped
+///              │                     └─ 自己退了（有序） ─► stopped，不重试
+///              │                     └─ 崩了 ─► 计数 +1 ─► 退避重试 / 隔离
+///              └─ 失败 ─► 计数 +1 ─► 同上
+/// ```
+async fn supervise(
+    inner: Arc<PluginHostInner>,
+    host: AppState,
+    spec: PluginSpec,
+    mut process: Option<PluginProcess>,
+    mut stop: oneshot::Receiver<()>,
+    first_handshake: oneshot::Sender<Result<PluginHello, PluginError>>,
+) {
+    // 只有**第一次**握手结果要回给调用方（launch/recover 的同步答案）。
+    let mut first_handshake = Some(first_handshake);
+    let plugin_id = spec.plugin_id.clone();
+    loop {
+        if process.is_none() {
+            match PluginProcess::spawn(&spec).await {
+                Ok(spawned) => process = Some(spawned),
                 Err(e) => {
                     let reason = e.to_string();
                     if let Some(tx) = first_handshake.take() {
                         let _ = tx.send(Err(e));
                     }
-                    child.kill().await;
-                    drop(child);
-                    if !self.on_crash(&host, &spec, &reason).await {
+                    if !on_crash(&inner, &host, &spec, &reason).await {
                         break;
                     }
+                    continue;
                 }
             }
         }
-        self.inner.live.lock().await.remove(&plugin_id);
-        tracing::debug!(plugin = %plugin_id, "plugin supervision task finished");
+        let mut child = process.take().expect("a live child was just ensured");
+        match child.handshake().await {
+            Ok(hello) => {
+                if let Some(tx) = first_handshake.take() {
+                    let _ = tx.send(Ok(hello.clone()));
+                }
+                on_handshake(&inner, &spec, &hello, child.pid());
+                let outcome = loop {
+                    let outcome = tokio::select! {
+                        status = child.child.wait() => Supervision::Exited(status.ok()),
+                        Some(_line) = child.lines.recv() => Supervision::Chatter,
+                        _ = &mut stop => Supervision::StopRequested,
+                    };
+                    if matches!(outcome, Supervision::Chatter) {
+                        continue;
+                    }
+                    break outcome;
+                };
+                match outcome {
+                    Supervision::StopRequested => {
+                        shutdown_plugin(&inner, &spec, child).await;
+                        break;
+                    }
+                    Supervision::Exited(Some(status)) if status.success() => {
+                        // 插件自己退了（有序停机或自愿退出）：不重试、不升级。
+                        on_voluntary_exit(&inner, &spec, &status);
+                        break;
+                    }
+                    Supervision::Exited(status) => {
+                        let reason = match status {
+                            Some(status) => format!("exited with {status}"),
+                            None => "exited without a status".to_string(),
+                        };
+                        drop(child);
+                        if !on_crash(&inner, &host, &spec, &reason).await {
+                            break;
+                        }
+                    }
+                    Supervision::Chatter => unreachable!("chatter loops above"),
+                }
+            }
+            Err(e) => {
+                let reason = e.to_string();
+                if let Some(tx) = first_handshake.take() {
+                    let _ = tx.send(Err(e));
+                }
+                child.kill().await;
+                drop(child);
+                if !on_crash(&inner, &host, &spec, &reason).await {
+                    break;
+                }
+            }
+        }
     }
+    inner.live.lock().await.remove(&plugin_id);
+    tracing::debug!(plugin = %plugin_id, "plugin supervision task finished");
+}
 
-    /// 握手成功：重试预算归零（自愈从干净账面开始）+ 记 pid。
-    fn on_handshake(&self, spec: &PluginSpec, hello: &PluginHello, pid: Option<u32>) {
-        if let Err(e) = self.inner.store.reset(&spec.plugin_id, pid, &now_rfc3339()) {
-            tracing::warn!(plugin = %spec.plugin_id, error = %e, "plugin state could not be reset");
+/// 握手成功：重试预算归零（自愈从干净账面开始）+ 记 pid。
+fn on_handshake(inner: &PluginHostInner, spec: &PluginSpec, hello: &PluginHello, pid: Option<u32>) {
+    if let Err(e) = inner.store.reset(&spec.plugin_id, pid, &now_rfc3339()) {
+        tracing::warn!(plugin = %spec.plugin_id, error = %e, "plugin state could not be reset");
         }
         tracing::info!(
             plugin = %spec.plugin_id,
@@ -475,47 +476,45 @@ impl PluginHost {
         );
     }
 
-    /// 插件自己退了（成功退出）：标 stopped，**不进**重试策略（GLOSSARY：隔离只防崩溃风暴）。
-    fn on_voluntary_exit(&self, spec: &PluginSpec, status: &std::process::ExitStatus) {
-        let at = now_rfc3339();
-        let _ = self
-            .inner
-            .store
-            .set_state(&spec.plugin_id, PluginState::Stopped, &at);
-        let _ = self
-            .inner
-            .store
-            .set_next_restart(&spec.plugin_id, None, &at);
-        tracing::info!(plugin = %spec.plugin_id, %status, "plugin exited on its own (stopped, no retry)");
-    }
+/// 插件自己退了（成功退出）：标 stopped，**不进**重试策略（GLOSSARY：隔离只防崩溃风暴）。
+fn on_voluntary_exit(inner: &PluginHostInner, spec: &PluginSpec, status: &std::process::ExitStatus) {
+    let at = now_rfc3339();
+    let _ = inner
+        .store
+        .set_state(&spec.plugin_id, PluginState::Stopped, &at);
+    let _ = inner
+        .store
+        .set_next_restart(&spec.plugin_id, None, &at);
+    let _ = inner.store.set_pid(&spec.plugin_id, None, &at);
+    tracing::info!(plugin = %spec.plugin_id, %status, "plugin exited on its own (stopped, no retry)");
+}
 
     /// 记一次崩溃并决定下一步：退避后重启（`true`）或进隔离（`false`）。
     ///
     /// ADR-0004 决策 4：分级指数退避 1s/10s/1min，上限 3 次；耗尽 → quarantined
     /// （停止重启 + `needs_attention` + 面板一键恢复）。崩溃/重启同时进 Kron 账
     /// （escalation，`actor=farm`）——经 #20 的审计双写路径，未入账只标记不阻塞。
-    async fn on_crash(&self, host: &AppState, spec: &PluginSpec, reason: &str) -> bool {
-        let at = now_rfc3339();
-        let restarts = match self.inner.store.note_crash(&spec.plugin_id, reason, &at) {
+async fn on_crash(inner: &PluginHostInner, host: &AppState, spec: &PluginSpec, reason: &str) -> bool {
+    let at = now_rfc3339();
+    let restarts = match inner.store.note_crash(&spec.plugin_id, reason, &at) {
             Ok(restarts) => restarts,
             Err(e) => {
                 tracing::error!(plugin = %spec.plugin_id, error = %e, "plugin crash could not be recorded");
                 0
             }
         };
-        let max = self.inner.policy.max_restarts();
+        let max = inner.policy.max_restarts();
 
         if restarts > max {
             // 重试耗尽 → 隔离（quarantined）：停止重启，等人裁决。
-            let _ = self
-                .inner
+            let _ = inner
                 .store
                 .set_state(&spec.plugin_id, PluginState::Quarantined, &at);
-            let _ = self
-                .inner
+            let _ = inner
                 .store
                 .set_next_restart(&spec.plugin_id, None, &at);
-            if let Ok(Some(status)) = self.inner.store.get(&spec.plugin_id) {
+            let _ = inner.store.set_pid(&spec.plugin_id, None, &at);
+            if let Ok(Some(status)) = inner.store.get(&spec.plugin_id) {
                 publish(host, quarantined_event(&status));
                 publish(host, needs_attention_event(&status, "plugin_quarantined"));
             }
@@ -528,13 +527,8 @@ impl PluginHost {
             return false;
         }
 
-        let wait = self
-            .inner
-            .policy
-            .backoff_for(restarts)
-            .unwrap_or_default();
-        let _ = self
-            .inner
+        let wait = inner.policy.backoff_for(restarts).unwrap_or_default();
+        let _ = inner
             .store
             .set_next_restart(&spec.plugin_id, Some(&rfc3339_after(wait)), &at);
         publish(
@@ -557,25 +551,39 @@ impl PluginHost {
         );
         tokio::time::sleep(wait).await;
         true
-    }
+}
 
-    /// 有序停机：关 stdin → 宽限 → 强杀，然后落 `stopped`。
-    async fn shutdown_plugin(&self, spec: &PluginSpec, child: PluginProcess) {
-        let outcome = child.shutdown(spec.shutdown_grace).await;
-        let at = now_rfc3339();
-        let _ = self
-            .inner
-            .store
-            .set_state(&spec.plugin_id, PluginState::Stopped, &at);
-        let _ = self
-            .inner
-            .store
-            .set_next_restart(&spec.plugin_id, None, &at);
-        tracing::info!(
-            plugin = %spec.plugin_id,
-            status = ?outcome,
-            "plugin shut down in order (stdin closed, then a grace window, then SIGKILL)"
-        );
+/// 有序停机：关 stdin → 宽限 → 强杀，然后落 `stopped`。
+async fn shutdown_plugin(inner: &PluginHostInner, spec: &PluginSpec, child: PluginProcess) {
+    let outcome = child.shutdown(spec.shutdown_grace).await;
+    let at = now_rfc3339();
+    let _ = inner
+        .store
+        .set_state(&spec.plugin_id, PluginState::Stopped, &at);
+    let _ = inner
+        .store
+        .set_next_restart(&spec.plugin_id, None, &at);
+    let _ = inner.store.set_pid(&spec.plugin_id, None, &at);
+    tracing::info!(
+        plugin = %spec.plugin_id,
+        status = ?outcome,
+        "plugin shut down in order (stdin closed, then a grace window, then SIGKILL)"
+    );
+}
+
+impl Drop for PluginHost {
+    fn drop(&mut self) {
+        // 最后一个句柄也没了（宿主卸载 / 测试收尾）：监督任务立刻停。
+        // 有序收尾是 [`PluginHost::shutdown_all`]；这里是**兜底**——任务一 abort，
+        // 它手里的 `PluginProcess` 被丢掉，`kill_on_drop` 保证子进程陪葬（无孤儿）。
+        let Ok(mut live) = self.inner.live.try_lock() else {
+            return; // 有任务正拿着锁：它会自己收尾，不阻塞 drop
+        };
+        for (plugin_id, entry) in live.drain() {
+            let _ = entry.stop.send(());
+            entry.task.abort();
+            tracing::debug!(plugin = %plugin_id, "plugin supervision aborted with the host handle");
+        }
     }
 }
 

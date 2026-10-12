@@ -146,6 +146,17 @@ impl PluginStore {
         })
     }
 
+    /// 记 / 清当前子进程 pid（停机、崩溃、进程消失时清掉：面板不该看见一个死 pid）。
+    pub fn set_pid(&self, plugin_id: &str, pid: Option<u32>, at: &str) -> Result<(), CoreError> {
+        self.db.with_conn(|conn| {
+            conn.execute(
+                "UPDATE plugin_state SET pid = ?2, updated_at = ?3 WHERE plugin_id = ?1",
+                rusqlite::params![plugin_id, pid, at],
+            )?;
+            Ok(())
+        })
+    }
+
     /// 记 / 清退避窗口（`None` = 没有待定的重启）。
     pub fn set_next_restart(
         &self,

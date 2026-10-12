@@ -18,6 +18,7 @@
 //! | `FAKE_PLUGIN_HELLO_DELAY_MS` | 握手行延迟（默认 0） |
 //! | `FAKE_PLUGIN_COUNTER` | `crash-once` 的运行计数文件路径 |
 //! | `FAKE_PLUGIN_HANG_MS` | `hang` 场景装死多久（默认 60000） |
+//! | `FAKE_PLUGIN_CONTRACT_VERSION` | 握手自描述的契约版本（默认 `1.0.0`；设 `2.0.0` 验证不兼容被拒） |
 
 use std::fs::OpenOptions;
 use std::io::{BufRead, Write};
@@ -48,7 +49,7 @@ fn main() {
     }
     if scenario == "crash-once" {
         // 第一次崩、之后正常：验证「崩溃后重启成功 + 自愈（重试预算归零）」。
-        let runs = bump_counter() + 1;
+        let runs = bump_counter();
         log_event(&json!({ "t": "run", "plugin": plugin_id, "run": runs }));
         if runs == 1 {
             log_event(&json!({ "t": "exit", "plugin": plugin_id, "code": exit_code, "why": "crash-once" }));
@@ -71,7 +72,7 @@ fn main() {
                 "t": "hello",
                 "plugin": plugin_id,
                 "name": env_or("FAKE_PLUGIN_NAME", "fake plugin"),
-                "contract_version": "1.0.0",
+                "contract_version": env_or("FAKE_PLUGIN_CONTRACT_VERSION", "1.0.0"),
                 "kind": "plugin",
             })
         );
