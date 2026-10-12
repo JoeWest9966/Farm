@@ -83,11 +83,24 @@ impl TrackerService {
     /// - 同一 assignee 重复 claim → 幂等，同样返回（不写新历史）；
     /// - 已被他人持有 → [`TrackerError::Conflict`]（GLOSSARY：失败即已被他人抢走）。
     pub fn claim(&self, issue_id: &str, assignee: &str) -> Result<Issue, TrackerError> {
+        self.claim_with_outcome(issue_id, assignee)
+            .map(|(issue, _)| issue)
+    }
+
+    /// 同 [`TrackerService::claim`]，但额外给出 CAS 结局。
+    ///
+    /// 调用方据此区分「真抢到」与「幂等重claim」——例如事件投影只在前者时发。
+    pub fn claim_with_outcome(
+        &self,
+        issue_id: &str,
+        assignee: &str,
+    ) -> Result<(Issue, ClaimOutcome), TrackerError> {
         // claim 的对象是归一化视图里的票：先拉平，provider 上存在的票才能被抢。
         self.sync()?;
-        match self.store.claim(issue_id, assignee, &now_rfc3339())? {
+        let outcome = self.store.claim(issue_id, assignee, &now_rfc3339())?;
+        match outcome {
             ClaimOutcome::Acquired | ClaimOutcome::AlreadyHeldByClaimant => {
-                Ok(self.require_issue(issue_id)?)
+                Ok((self.require_issue(issue_id)?, outcome))
             }
             ClaimOutcome::HeldByOther { holder } => Err(TrackerError::Conflict {
                 issue_id: issue_id.to_string(),

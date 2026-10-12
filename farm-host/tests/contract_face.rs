@@ -221,8 +221,8 @@ async fn the_bearer_authorization_header_is_accepted_as_the_op_token() {
     let response = app
         .oneshot(
             Request::builder()
-                .method(Method::GET)
-                .uri("/v1/tracker/issues")
+                .method(Method::POST)
+                .uri("/v1/merge/proposals")
                 .header(header::AUTHORIZATION, format!("Bearer {OP_TOKEN}"))
                 .body(Body::empty())
                 .expect("request"),
@@ -230,7 +230,7 @@ async fn the_bearer_authorization_header_is_accepted_as_the_op_token() {
         .await
         .expect("oneshot");
 
-    // 鉴权通过后落到占位路由：501 not_implemented。
+    // Bearer 鉴权通过后落到占位路由：501 not_implemented（证明 token 被接受）。
     assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
 }
 
@@ -251,8 +251,15 @@ async fn an_empty_token_header_is_unauthorized() {
 #[tokio::test]
 async fn every_placeholder_contract_route_answers_not_implemented_with_the_op_token() {
     for route in CONTRACT_ROUTES {
-        if route.path == "/v1/events/stream" {
-            continue; // WS 路由在 tests/event_stream_ws.rs 单测
+        // 已由对应服务票打通的路由不再是占位：WS 事件流、tracker 视图/claim、workspace 映射。
+        if matches!(
+            route.path,
+            "/v1/events/stream"
+                | "/v1/tracker/issues"
+                | "/v1/tracker/claims"
+                | "/v1/workspace/mappings"
+        ) {
+            continue;
         }
         let method: Method = route.method.parse().expect("GET/POST");
         let app = app();
@@ -334,7 +341,7 @@ async fn a_known_route_with_the_wrong_method_is_a_closed_set_method_not_allowed(
 async fn error_envelopes_are_the_same_shape_on_every_face() {
     let responses = [
         (Method::GET, "/v1/tracker/issues", None),          // unauthorized
-        (Method::GET, "/v1/tracker/issues", Some(OP_TOKEN)), // not_implemented
+        (Method::GET, "/v1/events/history", Some(OP_TOKEN)), // not_implemented
         (Method::GET, "/v1/nope", Some(OP_TOKEN)),           // not_found
     ];
     let mut codes = Vec::new();

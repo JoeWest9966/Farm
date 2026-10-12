@@ -3,8 +3,9 @@
 //! axum 承载三个面：
 //!
 //! 1. **编排器契约面**：`POST /handshake` + `CONTRACT_ROUTES` 九条路由（其中
-//!    `GET /v1/events/stream` 是 WS）。除 WS 外全部返回闭集 `not_implemented`
-//!    ——服务域实现归 #13–#18。
+//!    `GET /v1/events/stream` 是 WS，#13 又接通了 tracker 的
+//!    `GET /v1/tracker/issues` 与 `POST /v1/tracker/claims`）。其余路由返回闭集
+//!    `not_implemented`——服务域实现归 #14–#18。
 //! 2. **宿主管理 API**：`ADMIN_ROUTES` 两条，独立前缀 `/admin`；管理 token
 //!    校验机制是接口位，归 #23。
 //! 3. **面板伺服**：`build.rs` 把 `farm-panel` 编成 wasm 并嵌入，`/` 伺服。
@@ -32,8 +33,10 @@ use farm_sdk::HANDSHAKE_PATH;
 pub use error::ApiError;
 pub use panel::PanelAssets;
 
-/// 契约面上本票唯一真正打通的 route：WS 事件流（其余是占位）。
+/// 契约面上本票真正打通的 route：WS 事件流 + tracker 两条（#13）。
 const EVENTS_STREAM_PATH: &str = "/v1/events/stream";
+const TRACKER_ISSUES_PATH: &str = "/v1/tracker/issues";
+const TRACKER_CLAIMS_PATH: &str = "/v1/tracker/claims";
 
 /// 装配宿主路由：三个面 + 统一的闭集 404/405 兜底。
 ///
@@ -43,17 +46,18 @@ pub fn build_router(state: AppState) -> Router {
     // --- 契约面：按 CONTRACT_ROUTES 单一源挂载 ---
     let mut contract = Router::new().route(HANDSHAKE_PATH, post(contract::handshake));
     for route in CONTRACT_ROUTES {
-        let endpoint = if route.path == EVENTS_STREAM_PATH {
-            get(events_ws::events_stream)
-        } else {
-            match route.method {
+        let endpoint = match route.path {
+            EVENTS_STREAM_PATH => get(events_ws::events_stream),
+            TRACKER_ISSUES_PATH => get(contract::tracker_issues),
+            TRACKER_CLAIMS_PATH => post(contract::tracker_claims),
+            _ => match route.method {
                 "GET" => get(contract::not_implemented_placeholder),
                 "POST" => post(contract::not_implemented_placeholder),
                 other => panic!(
                     "CONTRACT_ROUTES 只声明 GET/POST；{} 用了 {other}",
                     route.path
                 ),
-            }
+            },
         };
         contract = contract.route(route.path, endpoint);
     }

@@ -8,6 +8,7 @@
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
+use farm_core::tracker::TrackerError;
 use farm_sdk::ContractError;
 
 /// 契约错误的 axum 投影。handler 一律返回它，不自己拼状态码。
@@ -17,6 +18,13 @@ pub struct ApiError(pub ContractError);
 impl From<ContractError> for ApiError {
     fn from(err: ContractError) -> Self {
         Self(err)
+    }
+}
+
+/// Tracker 服务的错误投影：闭集码不变，只是少写一层 `to_contract_error()`。
+impl From<TrackerError> for ApiError {
+    fn from(err: TrackerError) -> Self {
+        Self(err.into())
     }
 }
 
