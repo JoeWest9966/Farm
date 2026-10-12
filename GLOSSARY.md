@@ -120,3 +120,21 @@ _避免_: 熔断（无自动恢复语义——恢复是人裁决）、死亡标�
 agent-runner 本地后端对 pi 子进程的监督规格（源自 Slaveholder 六篇 ADR）：读循环健康度前置 → 两口钟（静默钟+总钟）→ abort 探针（30s 独立死线）→ fork 找回。完成判定 = `agent_settled` 且最后一条权威 assistant 消息 `stopReason === "stop"` 双条件。pi 子进程不是插件，不进插件重试策略。
 
 _避免_: 重试策略（那是插件监督的事）、超时（一个词装不下两口钟）
+
+## 宿主私有存储 / Host-private Store
+
+Farm 宿主的嵌入式 SQLite（WAL）：面板与编排器的唯一读源（经契约/投影 API），但 schema 是宿主私有实现细节，永不外泄为契约。持久项：票快照与状态历史、attempts 时间线、事件日志、workspace 映射、覆盖层、通知通道配置、last-known-good。易失项：调度瞬态、全量 transcript、进程句柄。
+
+_避免_: 数据库（口语句可用，正式名强调私有性）、状态层（太泛）
+
+## 审计双写 / Audit Double-write
+
+关键事件（派发、merge、审批、stall 判杀、host_restarted）既进宿主私有存储（面板读源）又经 `ledger record` 子进程进 Kron 账本（审计真源）。Kron 写失败不阻塞主流程；未入账事件带 `audited` 标记位，启动时批量补账（ledger 幂等）。审计是旁路，不是运行依赖。
+
+_避免_: 事件镜像（暗示同步复制）、审计日志（那是 Kron 本身）
+
+## 中断态 / Interrupted
+
+attempt 的第四种终态：宿主重启时所有 `running` attempt 被标记的记账状态。非成功非失败，worktree 不清（保留现场），token 记账以最后快照为准并标 `accounting_truncated`。是否重派由编排器按 workflow 配置裁决，宿主不自作主张。
+
+_避免_: 失败（重试语义不同——interrupted 不触发退避计数）、孤儿（那是进程视角的词）
