@@ -20,12 +20,15 @@ fn main() {
         std::process::exit(exit_code());
     }
 
-    // 解析 `--log <path>`（record 路径需要）。
+    // 解析 `--log <path>`（record 路径需要）；缺省回退到 `FAKE_LEDGER_LOG` env
+    // （真实宿主经 AuditSink::from_env 用默认 `record` argv，不带 --log；env 让其在
+    //  端到端演练里可观测，而测试里的 `--log` argv 仍优先，向后兼容）。
     let log_path = argv
         .iter()
         .position(|a| a == "--log")
         .and_then(|i| argv.get(i + 1))
-        .cloned();
+        .cloned()
+        .or_else(|| std::env::var("FAKE_LEDGER_LOG").ok());
     let Some(log_path) = log_path else {
         std::process::exit(exit_code());
     };

@@ -53,18 +53,33 @@ pub async fn establish_worktree(
         )));
     }
 
+    let repo_path_str = request.repo_path.clone();
+    let spec_id_str = request.spec_id.clone();
     let row = state
         .workspace
         .establish(&EstablishRequest {
             spec_id: request.spec_id,
             integration_branch: request.integration_branch,
             ticket_id: request.ticket_id,
-            repo_path: std::path::PathBuf::from(request.repo_path),
-            worktree_path: std::path::PathBuf::from(request.worktree_path),
+            repo_path: std::path::PathBuf::from(&request.repo_path),
+            worktree_path: std::path::PathBuf::from(&request.worktree_path),
             worktree_branch: request.worktree_branch,
             start_point: request.start_point,
         })
         .map_err(|e| ApiError(e.to_contract_error()))?;
+
+    // 装载该仓库的 workflow 配置（GLOSSARY「Workflow 配置」= 投影开关的源）。
+    // 键用两把，桥接本仓既有的 keying 分工：merge 服务的投影按 `mapping.repo_path`
+    // 读生效配置（farm_core::merge::projection::switches_for），而宿主管理面
+    // `GET /admin/workflow/config/{repo_id}` 按单段 repo_id 读——两者各装一份同一份
+    // `.farm/workflow.json`，让机械投影与契约客户端/面板都读得到。建立 worktree 这一刻
+    // （宿主首次在该仓库上编排）把配置装成 LKG。只在配置文件存在时装载：仓库没配
+    // workflow 就保持「无生效配置」（投影全关的安全默认），不滥发 needs_attention。
+    let repo_root = std::path::Path::new(&repo_path_str);
+    if repo_root.join(".farm/workflow.json").exists() {
+        let _ = state.workflow.load_repo(&repo_path_str, repo_root);
+        let _ = state.workflow.load_repo(&spec_id_str, repo_root);
+    }
 
     Ok(Json(WorktreeRef {
         ticket_id: row.ticket_id,

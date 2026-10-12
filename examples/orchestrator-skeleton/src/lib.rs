@@ -6,10 +6,13 @@
 //!
 //! 只 depend `farm-sdk`（纯契约类型，零运行时）——与面板、插件同路。
 
+pub mod chain;
 pub mod client;
 pub mod conformance;
+pub mod harness;
 pub mod report;
 
+pub use chain::{run_full_chain, ChainBinaries};
 pub use client::{run_contract_smoke, ContractClient, SmokeCheck};
 pub use conformance::run_conformance;
 pub use report::{Check, Report};

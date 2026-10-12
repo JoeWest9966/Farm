@@ -192,8 +192,54 @@ async fn establishing_a_worktree_over_a_broken_repo_is_a_closed_set_internal() {
     assert_eq!(err.code, farm_sdk::ErrorCode::Internal);
 }
 
-// 让 PathBuf import 在所有 cfg 下都不触发 unused（夹具里用到）。
-#[allow(dead_code)]
-fn _use_pathbuf(p: PathBuf) {
-    let _ = p;
-}
+    // 建立 worktree 时装载仓库的 workflow 配置（管理面可读回）。
+    #[tokio::test]
+    async fn establishing_a_worktree_loads_the_repos_workflow_config_for_the_admin_face() {
+        use common::{admin_state, ADMIN_TOKEN};
+        let repo = scratch_repo();
+        std::fs::create_dir_all(repo.path().join(".farm")).expect("mkdir .farm");
+        std::fs::write(
+            repo.path().join(".farm/workflow.json"),
+            r#"{"dispatch_labels":["dispatch"],"max_concurrency":3,"stall_threshold_secs":60,"prompt_template":"work {{ticket_id}}","projection":{"close_issue":true}}"#,
+        )
+        .expect("write workflow.json");
+        let wt_parent = tempfile::tempdir().expect("worktree parent");
+        let request = WorktreeEstablishRequest {
+            spec_id: SPEC.into(),
+            integration_branch: INTEGRATION.into(),
+            ticket_id: TICKET.into(),
+            repo_path: repo.path().to_string_lossy().into_owned(),
+            worktree_path: wt_parent.path().join("t26").to_string_lossy().into_owned(),
+            worktree_branch: BRANCH.into(),
+            start_point: Some(INTEGRATION.into()),
+        };
+        let app: Router = build_router(admin_state());
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "/v1/workspace/worktrees",
+                Some(OP_TOKEN),
+                &serde_json::to_string(&request).expect("serialize"),
+            ))
+            .await
+            .expect("oneshot");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // 配置被装载：管理面 GET /admin/workflow/config/{spec_id} 反映 Fresh + 投影开关。
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(format!("/admin/workflow/config/{SPEC}"))
+                    .header("x-farm-admin-token", ADMIN_TOKEN)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("oneshot");
+        assert_eq!(response.status(), StatusCode::OK);
+        let status: farm_sdk::WorkflowConfigStatus = body_json(response).await;
+        let effective = status.effective.expect("the workflow config was loaded on establish");
+        assert_eq!(effective.max_concurrency, 3);
+        assert!(effective.projection.close_issue, "投影关票开关随配置生效");
+    }
