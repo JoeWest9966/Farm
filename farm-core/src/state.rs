@@ -12,6 +12,7 @@ use crate::db::Database;
 use crate::error::CoreError;
 use crate::events::EventBus;
 use crate::migrations::{Migrator, MIGRATIONS};
+use crate::workspace::WorkspaceService;
 
 /// 宿主共享状态。`Clone` 廉价（内部 `Arc`/`Clone`），可被 axum handler 广泛共享。
 #[derive(Clone)]
@@ -19,6 +20,8 @@ pub struct AppState {
     pub config: Arc<HostConfig>,
     pub db: Database,
     pub events: EventBus,
+    /// Workspace 服务句柄（#14，加法追加）：持有 spec↔集成分支↔worktree 映射。
+    pub workspace: WorkspaceService,
 }
 
 impl AppState {
@@ -28,8 +31,9 @@ impl AppState {
         db.migrate(&Migrator::new(MIGRATIONS))?;
         Ok(Self {
             config: Arc::new(config),
-            db,
+            db: db.clone(),
             events: EventBus::new(),
+            workspace: WorkspaceService::new(db),
         })
     }
 
@@ -39,8 +43,9 @@ impl AppState {
         db.migrate(&Migrator::new(MIGRATIONS))?;
         Ok(Self {
             config: Arc::new(config),
-            db,
+            db: db.clone(),
             events: EventBus::new(),
+            workspace: WorkspaceService::new(db),
         })
     }
 }
