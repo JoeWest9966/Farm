@@ -22,6 +22,7 @@
 
 pub mod accounting;
 pub mod credentials;
+pub mod ladder;
 pub mod process;
 pub mod rpc;
 

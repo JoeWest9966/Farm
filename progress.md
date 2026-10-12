@@ -13,7 +13,7 @@ TDD 红→绿，竖切片，每片一次 checkpoint commit。
 | clear_queue 往返 | done（替身侧） | 宿主侧 API 待 service 片 |
 | env 只进 pi 子进程 | done（替身侧） | 宿主侧 `credentials::EnvPolicy` 待 credentials 片 |
 | process（spawn + 读循环） | done | `PiProcess::{spawn,send,close_stdin,kill,wait}` + `probe_version`/`round_trip`；读循环 = `read_until(b'\n')`；三段式收尾 |
-| 判据阶梯四梯 | pending | 读循环健康度前置 / 两口钟 / abort 探针 / fork 找回 |
+| 判据阶梯四梯 | doing | `ladder.rs` 判决内核（前置 + 两口钟 + 探针）已落地；fork 找回随 service 片 |
 | 完成双条件 | pending | `agent_settled` + 最后权威 assistant `stopReason==="stop"` |
 | token 流式记账 | pending | 绝对累计、宁少报不虚报、`parentToolCallId` 嵌套用量 |
 | disposition 回流 | pending | `prompt/steer/follow_up` 响应 disposition 进事件总线 |
@@ -53,6 +53,17 @@ TDD 红→绿，竖切片，每片一次 checkpoint commit。
     原签名收 `tokio::process::Command` 编不过，这是本片接上的第一个洞）。
   - 测试：`tests/agent_runner_process.rs` 7 条，全绿。
 
+- **slice 2（判据阶梯内核）** `feat(agent-runner): 判据阶梯——两口钟 + abort 探针独立死线`
+  - `ladder.rs`：纯判决内核（不碰 I/O），`JudgementLadder::{note_frame,note_authoritative_message,
+    note_settled,is_settled,check,next_wait,request_abort}`。
+  - 读循环健康度前置 = 帧数度量（`frames_seen()==0` = 启动即坏）；静默钟看「离上一帧多久」，
+    总钟看「attempt 活了多久」（流式场景静默钟不到点、总钟照样到）；abort 探针 30s
+    **独立死线**，来帧不重置。
+  - `observe_event` 一帧过筛：`agent_settled` / `message_end`（权威）/ `agent_end.messages[]`
+    （**system 消息滤掉**）/ `tool_execution_end`（`parentToolCallId` 嵌套用量）/
+    `compaction_end`；`message_update` 的累积快照**不入账**。
+  - 测试：`ladder.rs` 内 15 条单测，全绿。
+
 ## 剩余（remaining）
 
-ladder → accounting 接线 → store(v6) → service → credentials 接线 → 宿主路由 → 真 pi 冒烟。
+accounting 接线 → store(v6) → service → credentials 接线 → 宿主路由 → 真 pi 冒烟。
