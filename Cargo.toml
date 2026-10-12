@@ -1,0 +1,51 @@
+[workspace]
+resolver = "2"
+members = ["farm-sdk", "farm-core", "farm-panel", "farm-host"]
+
+# `examples/` is intentionally NOT a workspace member (ADR-0003 五分法): the
+# orchestrator-skeleton and future plugin skeletons are standalone crates that
+# depend only on `farm-sdk`. CI compiles them separately.
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+license = "MIT"
+repository = "https://github.com/JoeWest9966/Farm"
+
+[workspace.dependencies]
+# --- serialization / schema (the only deps farm-sdk may use) ---
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+schemars = "1"
+
+# --- shared error/derive helpers ---
+thiserror = "2"
+
+# --- farm-core ---
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "net"] }
+rusqlite = { version = "0.37", features = ["bundled"] }
+getrandom = "0.3"
+time = { version = "0.3", features = ["formatting", "std"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# --- farm-host ---
+axum = { version = "0.8", features = ["ws"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["fs", "trace"] }
+rust-embed = "8"
+tokio-tungstenite = "0.28"
+futures-util = "0.3"
+
+# --- farm-panel ---
+dioxus = "0.7"
+
+# --- dev / examples ---
+tempfile = "3"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

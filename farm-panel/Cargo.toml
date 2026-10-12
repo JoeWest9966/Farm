@@ -1,0 +1,18 @@
+[package]
+name = "farm-panel"
+description = "Farm 面板（Operator Console，ADR-0002）：Dioxus 纯 CSR crate，编译为 wasm32-unknown-unknown，由 farm-host 经 rust-embed 嵌入。"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# The panel is a wasm32-unknown-unknown artifact only; it has no host-side bin.
+[lib]
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"
+
+[dependencies]
+dioxus = { workspace = true, features = ["web"] }
+farm-sdk = { path = "../farm-sdk" }
+wasm-bindgen = "0.2"

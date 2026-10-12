@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Farm 操作台</title>
+    <!--
+      GENERATED-ISH TEMPLATE — 由 farm-host/build.rs 把 {{PANEL_JS}} 替换成
+      wasm-bindgen 产出的胶水文件名后，连同 wasm 一起 rust-embed 进宿主二进制。
+      ADR-0003 决策 4：单二进制，面板产物随宿主走，集群节点捡起来就能伺服。
+    -->
+  </head>
+  <body>
+    <script type="module">
+      import init from "./{{PANEL_JS}}";
+      init();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Farm 操作台 — 占位页</title>
+    <!--
+      回退页：面板 wasm 产物拿不到时（wasm target 未装 / wasm-bindgen CLI 缺失 /
+      内层 cargo 构建失败），farm-host 仍然编译通过并在 `/` 伺服这一页。
+      build.rs 会把 {{CONTRACT_VERSION}} 换成 farm-sdk 的契约版本。
+    -->
+  </head>
+  <body>
+    <h1>Farm 操作台 — 占位页</h1>
+    <p>面板 wasm 未嵌入（占位回退）。契约版本：{{CONTRACT_VERSION}}。</p>
+    <p>契约 HTTP API 与 WS 事件流不受影响；面板本体归 #22 批次。</p>
+  </body>
+</html>
