@@ -1,0 +1,68 @@
+# Conformance CI（ticket #26）：一致性套件对真实 farm-host 二进制全绿，
+# 作为外部实现接入 farm 的「符合契约」凭证。没有本地跑过的绿，只有 CI 的绿。
+#
+# 结构（与 ADR-0003 五分法对齐）：
+#   1. workspace：farm-sdk 契约文档零漂移断言 + farm-core/host 全量测试
+#      （real-pi smoke 在无 pi 的 runner 上自动跳过，不产生假红）
+#   2. conformance：examples/orchestrator-skeleton 的 conformance / e2e_chain /
+#      smoke 套件，对上面编出的真实宿主进程与 fake 替身跑
+#   3. notifier：examples/http-notifier 插件接缝测试
+
+name: conformance
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  workspace:
+    name: workspace (sdk docs + core tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: git identity（merge 提交类测试需要）
+        run: |
+          git config --global user.name "farm-ci"
+          git config --global user.email "farm-ci@example.invalid"
+      - name: Build workspace
+        run: cargo build --workspace --all-targets
+      - name: Test workspace
+        run: cargo test --workspace
+
+  conformance:
+    name: conformance (real farm-host binary)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: git identity
+        run: |
+          git config --global user.name "farm-ci"
+          git config --global user.email "farm-ci@example.invalid"
+      # 宿主与 fake 替身（fake-pi / fake-nw / fake-ledger）落在仓库根 target/，
+      # 测试夹具经 manifest/../../target 回退路径自动定位（无需 FARM_HOST_BIN）。
+      - name: Build farm-host + fakes
+        run: cargo build -p farm-host -p farm-core --bins
+      - name: Build http-notifier plugin
+        run: cargo build --manifest-path examples/http-notifier/Cargo.toml
+      - name: Conformance suite against real farm-host
+        run: cargo test --manifest-path examples/orchestrator-skeleton/Cargo.toml
+        env:
+          FARM_NOTIFIER_BIN: ${{ github.workspace }}/examples/http-notifier/target/debug/http-notifier
+
+  notifier:
+    name: notifier plugin seam tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Test http-notifier
+        run: cargo test --manifest-path examples/http-notifier/Cargo.toml

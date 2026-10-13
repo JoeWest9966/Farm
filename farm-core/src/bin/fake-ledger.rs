@@ -39,8 +39,15 @@ fn main() {
         .open(&log_path)
         .expect("open fake ledger log");
 
+    // 单行单次 `write_all`：O_APPEND 下一次 write 是原子的；`writeln!` 会按 fmt 片段
+    // 分多次 write，并发追加（宿主后台双写 + 启动补账同时起子进程）时会拦腰打断彼此的行，
+    // 日志里留下解析不了的错乱 JSON——行级互斥靠“整行一次写”保证。
+    let mut write_line = |line: &str| {
+        let _ = log.write_all(format!("{line}\n").as_bytes());
+    };
+
     // spawn 记录：argv 是「调用形状」的可断言面。
-    let _ = writeln!(log, "{}", spawn_record(&argv));
+    write_line(&spawn_record(&argv).to_string());
 
     // 读 stdin 的 NDJSON，逐行原文记进日志（宿主怎么写我们就怎么记）。
     let stdin = std::io::stdin();
@@ -53,7 +60,7 @@ fn main() {
             continue;
         }
         let record = serde_json::json!({ "t": "record", "line": line });
-        let _ = writeln!(log, "{record}");
+        write_line(&record.to_string());
     }
 
     std::process::exit(exit_code());
