@@ -35,7 +35,11 @@ pub fn router() -> Router<AppState> {
     for path in PanelAssets::iter() {
         if is_static_asset_path(&path) {
             let route = format!("/{path}");
-            router = router.route(&route, get(asset));
+            // 路由是静态路径（无 `{}` 占位），handler 里没有 `Path` 可提取——
+            // 资产路径在注册期已知，直接闭包捕获。用 `Path<String>` 会在请求期
+            // 500（Expected 1 but got 0），且单测抓不到，只有真伺服才炸。
+            let owned = path.to_string();
+            router = router.route(&route, get(move || async move { asset_response(&owned) }));
         }
     }
     router
@@ -44,11 +48,6 @@ pub fn router() -> Router<AppState> {
 /// `GET /`：面板入口页。
 async fn index() -> Response {
     asset_response("index.html")
-}
-
-/// `GET /<asset>`：嵌入的面板产物（wasm / JS 胶水 / 源码片段）。
-async fn asset(axum::extract::Path(path): axum::extract::Path<String>) -> Response {
-    asset_response(&path)
 }
 
 fn asset_response(path: &str) -> Response {

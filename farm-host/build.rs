@@ -133,8 +133,11 @@ fn build_panel(manifest_dir: &Path, dist: &Path) -> Option<String> {
 
     let workspace_root = workspace_root(manifest_dir);
     let target_dir = panel_target_dir(&workspace_root);
-    let release = std::env::var("PROFILE").as_deref() == Ok("release")
-        || std::env::var_os("FARM_PANEL_RELEASE").is_some();
+
+    // 面板 wasm 无条件 release：dioxus 0.7 的 debug 构建首帧要等 `/_dioxus`
+    // devtools WS（dx serve 才有），独立伺服时握手永不完成 → 白屏（实证过）。
+    // 面板很小，release 代价可忽略，且与宿主 profile 解耦。
+    let release = true;
 
     let mut cmd = Command::new(cargo_bin());
     cmd.current_dir(&workspace_root)

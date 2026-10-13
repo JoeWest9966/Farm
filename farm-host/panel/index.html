@@ -11,6 +11,9 @@
     -->
   </head>
   <body>
+    <!-- dioxus-web 默认根容器是 #main；缺失时它会挂到一个游离的 body 元素上（0.7.10
+         dom.rs 的 fallback 是 create_element("body")），页面上永远不可见 → 白屏。 -->
+    <div id="main"></div>
     <script type="module">
       import init from "./{{PANEL_JS}}";
       init();
