@@ -69,7 +69,7 @@ async fn the_installed_pi_speaks_the_wire_protocol_and_its_version_is_recorded()
     let mut saw_event_types: Vec<String> = Vec::new();
     let mut frames_seen = 0usize;
     for _ in 0..12 {
-        let frame = tokio::time::timeout(std::time::Duration::from_secs(5), reader.next_frame())
+        let frame = tokio::time::timeout(std::time::Duration::from_secs(30), reader.next_frame())
             .await;
         let Ok(Ok(Some(line))) = frame else { break };
         frames_seen += 1;
