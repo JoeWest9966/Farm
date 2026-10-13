@@ -1,0 +1,33 @@
+# cargo-dist 工作区配置头（cargo-dist 0.28.0 要求 dist-workspace.toml 带 [workspace] 标记；
+# 缺它连配置都解析不过——原交付缺此头，从未真正构建过产物）。
+[workspace]
+members = ["cargo:"]
+
+# cargo-dist 配置（ticket #11）：farm-host 单二进制多平台产物。
+#
+# ADR-0003 决策 4：部署形态是单二进制——前端 WASM 经 rust-embed 嵌入 axum 静态路由，
+# cargo-dist 出多平台发布产物，Rust 天生静态编译、无需额外打包。
+#
+# 注意：本开发环境未安装 cargo-dist，故此处只交付**正确配置**；在装有
+# `cargo-dist` 的机器上 `cargo dist build` 即产出下列目标的单文件可执行。
+# farm-host 是 workspace 唯一 bin，cargo-dist 默认打包它。
+
+[dist]
+# 复现性：钉一个 cargo-dist 版本（按需升级）。
+cargo-dist-version = "0.28.0"
+
+# 多平台目标（覆盖常见服务器 + 开发者机器；集群节点是"捡来的服务器"）。
+targets = [
+  "x86_64-unknown-linux-gnu",
+  "aarch64-unknown-linux-gnu",
+  "x86_64-apple-darwin",
+  "aarch64-apple-darwin",
+  "x86_64-pc-windows-msvc",
+]
+
+# 本版不出 shell/powershell 安装器（留待发布流程再裁）。
+installers = []
+
+# 打包 release profile（root Cargo.toml 已设 opt-level="z" + lto + strip）。
+[dist.dependencies.apt]
+# 仅文档用途：静态 musl 目标若要可移植可在 CI 增配；此处保持 glibc 默认。

@@ -1,0 +1,20 @@
+[package]
+name = "plugin-skeleton"
+description = "示例插件（ticket #19）：以契约客户端身份接入 Farm 宿主——握手 + 经契约 claim 票（与编排器同路，无私有后门）。"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+license = "MIT"
+repository = "https://github.com/JoeWest9966/Farm"
+
+# 独立 workspace：插件 crate 不进 Farm workspace（ADR-0003），只靠 farm-sdk 对齐契约。
+[workspace]
+
+[[bin]]
+name = "plugin-skeleton"
+path = "src/main.rs"
+
+[dependencies]
+farm-sdk = { path = "../../farm-sdk" }
+tokio = { version = "1", features = ["rt", "macros", "net", "time", "io-util"] }
+serde_json = "1"

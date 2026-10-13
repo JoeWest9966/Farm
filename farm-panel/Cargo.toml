@@ -1,0 +1,39 @@
+[package]
+name = "farm-panel"
+description = "Farm 面板（Operator Console，ADR-0002）：Dioxus 纯 CSR crate，编译为 wasm32-unknown-unknown，由 farm-host 经 rust-embed 嵌入。"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# The panel is a wasm32-unknown-unknown artifact only; it has no host-side bin.
+[lib]
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"
+
+[dependencies]
+dioxus = { workspace = true, features = ["web"] }
+farm-sdk = { path = "../farm-sdk" }
+serde.workspace = true
+serde_json.workspace = true
+wasm-bindgen = "0.2"
+
+# 浏览器传输层只在 wasm 侧存在（web-sys 在宿主 target 上不可用，故按 target 关）。
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = "0.3"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = [
+  "CloseEvent",
+  "ErrorEvent",
+  "Headers",
+  "MessageEvent",
+  "Request",
+  "RequestInit",
+  "Response",
+  "WebSocket",
+  "Window",
+] }
+
+[dev-dependencies]
+serde_json.workspace = true

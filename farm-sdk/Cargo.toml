@@ -1,0 +1,13 @@
+[package]
+name = "farm-sdk"
+description = "Farm 编排器契约（orchestrator contract）纯类型 crate：契约类型、宿主管理 API schema、闭集错误码、事件闭集。零运行时依赖（ADR-0003 五分法）。"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true

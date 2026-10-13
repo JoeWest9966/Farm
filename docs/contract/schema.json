@@ -1,0 +1,2044 @@
+{
+  "$defs": {
+    "AbortRequest": {
+      "additionalProperties": false,
+      "description": "abort：中止 attempt（30s 独立死线的 abort 探针由 #16 实现）。",
+      "properties": {
+        "attempt_id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "attempt_id"
+      ],
+      "title": "AbortRequest",
+      "type": "object"
+    },
+    "AdminPluginListResponse": {
+      "additionalProperties": false,
+      "description": "`GET /admin/plugins` 的响应信封（占位）。",
+      "properties": {
+        "plugins": {
+          "items": {
+            "$ref": "#/$defs/PluginSummary"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "plugins"
+      ],
+      "title": "AdminPluginListResponse",
+      "type": "object"
+    },
+    "AdminStatusResponse": {
+      "additionalProperties": false,
+      "description": "宿主管理 API 自描述（面板据此知道管理面在跑、契约版本是什么）。",
+      "properties": {
+        "bind_addr": {
+          "description": "宿主监听地址（管理面与契约面同进程同端口，只是前缀不同）。",
+          "type": "string"
+        },
+        "contract_version": {
+          "type": "string"
+        },
+        "host_version": {
+          "type": "string"
+        },
+        "services": {
+          "items": {
+            "$ref": "#/$defs/ServiceName"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "host_version",
+        "contract_version",
+        "bind_addr",
+        "services"
+      ],
+      "title": "AdminStatusResponse",
+      "type": "object"
+    },
+    "AttemptState": {
+      "description": "attempt 状态（占位闭集；第四终态 `interrupted` 见 GLOSSARY）。",
+      "oneOf": [
+        {
+          "enum": [
+            "running",
+            "failed",
+            "aborted"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "settled",
+          "description": "判据阶梯判终态（`agent_settled` + `stopReason === \"stop\"` 双条件）。",
+          "type": "string"
+        },
+        {
+          "const": "interrupted",
+          "description": "宿主重启导致的第四终态：非成功非失败，worktree 不清。",
+          "type": "string"
+        }
+      ],
+      "title": "AttemptState"
+    },
+    "AuthScheme": {
+      "additionalProperties": false,
+      "description": "鉴权方式自描述：编排器据此知道往哪个 header 塞 token。",
+      "properties": {
+        "admin_header": {
+          "description": "宿主管理 API 的**独立** token header（与管理 token 机制区分）。",
+          "type": "string"
+        },
+        "also_accepts_bearer": {
+          "description": "同时接受 `Authorization: Bearer <token>`。",
+          "type": "boolean"
+        },
+        "http_header": {
+          "description": "契约面（含 `/handshake`、五服务路由与 WS upgrade）的 token header。",
+          "type": "string"
+        },
+        "ws_upgrade_requires_token": {
+          "description": "WS upgrade 同样验 token（与 HTTP 同一闭集错误）。",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "http_header",
+        "also_accepts_bearer",
+        "ws_upgrade_requires_token",
+        "admin_header"
+      ],
+      "title": "AuthScheme",
+      "type": "object"
+    },
+    "ClaimRequest": {
+      "additionalProperties": false,
+      "description": "原子 claim 请求（CAS 语义；失败即已被他人抢走）。",
+      "properties": {
+        "assignee": {
+          "type": "string"
+        },
+        "issue_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "issue_id",
+        "assignee"
+      ],
+      "title": "ClaimRequest",
+      "type": "object"
+    },
+    "ClaimResponse": {
+      "additionalProperties": false,
+      "description": "原子 claim 结果。\n\n`claimed` 是**成功投影**：抢到（含同一 assignee 的幂等重claim）恒为 `true`。\n未抢到的调用方收到的是闭集 `conflict` 错误信封（409），`details.holder`\n是当前持有者——GLOSSARY：失败即已被他人抢走。",
+      "properties": {
+        "claimed": {
+          "description": "true = claim 成功；false = 已被他人持有（调用方收到 `conflict` 语义）。",
+          "type": "boolean"
+        },
+        "holder": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "issue_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "issue_id",
+        "claimed"
+      ],
+      "title": "ClaimResponse",
+      "type": "object"
+    },
+    "ClearQueueResponse": {
+      "additionalProperties": false,
+      "description": "`clear_queue` 的受理结果：清掉挂在 attempt 上的待注入（steering / followUp /\n被推迟的注入），回报清了几条。\n\nattempt 不在跑 → 闭集 `conflict`（attempt 已收尾，没什么可清）；attempt 不存在\n→ 闭集 `not_found`。面板的 HITL 输入框旁边用它丢弃排队中的注入。",
+      "properties": {
+        "attempt_id": {
+          "type": "string"
+        },
+        "cleared": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "attempt_id",
+        "cleared"
+      ],
+      "title": "ClearQueueResponse",
+      "type": "object"
+    },
+    "ClientInfo": {
+      "additionalProperties": false,
+      "description": "客户端自描述。",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ClientKind"
+        },
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version",
+        "kind"
+      ],
+      "title": "ClientInfo",
+      "type": "object"
+    },
+    "ClientKind": {
+      "description": "客户端身份种类（闭集）。",
+      "oneOf": [
+        {
+          "const": "orchestrator",
+          "description": "编排器：以插件身份接入的独立进程（ADR-0001）。",
+          "type": "string"
+        },
+        {
+          "const": "panel",
+          "description": "面板：操作台，与编排器同路调用契约。",
+          "type": "string"
+        },
+        {
+          "const": "plugin",
+          "description": "其他进程级插件。",
+          "type": "string"
+        }
+      ],
+      "title": "ClientKind"
+    },
+    "ContractError": {
+      "additionalProperties": false,
+      "description": "契约错误信封：HTTP 响应体与 WS 文本帧共用同一形状。\n\n```json\n{\"code\":\"not_implemented\",\"message\":\"...\",\"retryable\":false}\n```",
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/ErrorCode"
+        },
+        "details": {
+          "description": "可选的附加信息（开放形状）；闭集只在 `code` 上。"
+        },
+        "message": {
+          "type": "string"
+        },
+        "retryable": {
+          "default": false,
+          "description": "是否可重试；与 `code.is_retryable()` 一致。",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "ContractError",
+      "type": "object"
+    },
+    "DispatchRequest": {
+      "additionalProperties": false,
+      "description": "派发请求。",
+      "properties": {
+        "issue_id": {
+          "type": "string"
+        },
+        "profile": {
+          "description": "派内容物（skill / extension / runtime_pins）装配标识。",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "prompt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "issue_id"
+      ],
+      "title": "DispatchRequest",
+      "type": "object"
+    },
+    "DispatchResponse": {
+      "additionalProperties": false,
+      "description": "派发结果。",
+      "properties": {
+        "attempt_id": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/AttemptState"
+        }
+      },
+      "required": [
+        "attempt_id",
+        "state"
+      ],
+      "title": "DispatchResponse",
+      "type": "object"
+    },
+    "EffectiveSource": {
+      "description": "当前生效配置的来源。",
+      "oneOf": [
+        {
+          "const": "fresh",
+          "description": "仓库当前配置合法，直接生效。",
+          "type": "string"
+        },
+        {
+          "const": "last_known_good",
+          "description": "仓库当前配置非法，回退到 last-known-good 生效。",
+          "type": "string"
+        }
+      ],
+      "title": "EffectiveSource"
+    },
+    "ErrorCode": {
+      "description": "契约错误码闭集。\n\n字符串形式即编排器看到的 `code` 字段（snake_case）。`ALL` 是唯一权威清单，\n一致性套件与生成文档都以它为准。",
+      "oneOf": [
+        {
+          "const": "unauthorized",
+          "description": "无 token 或 token 错误。缺 token 与错 token **同码**（不做区分，避免预言机）。",
+          "type": "string"
+        },
+        {
+          "const": "forbidden",
+          "description": "已鉴权但无权限（例如把操作 token 当管理 token 用）。",
+          "type": "string"
+        },
+        {
+          "const": "contract_version_unsupported",
+          "description": "握手时契约版本不被宿主支持。",
+          "type": "string"
+        },
+        {
+          "const": "invalid_request",
+          "description": "请求体/参数不符合契约 schema。",
+          "type": "string"
+        },
+        {
+          "const": "not_found",
+          "description": "路由不存在。",
+          "type": "string"
+        },
+        {
+          "const": "method_not_allowed",
+          "description": "路由存在但方法不对。",
+          "type": "string"
+        },
+        {
+          "const": "conflict",
+          "description": "状态冲突（例如原子 claim 已被他人抢走）。",
+          "type": "string"
+        },
+        {
+          "const": "not_implemented",
+          "description": "路由已占位、服务未实现（本票骨架的统一回答）。",
+          "type": "string"
+        },
+        {
+          "const": "service_unavailable",
+          "description": "宿主暂时不可用（可重试）。",
+          "type": "string"
+        },
+        {
+          "const": "internal",
+          "description": "宿主内部错误（不可重试）。",
+          "type": "string"
+        }
+      ],
+      "title": "ErrorCode"
+    },
+    "EventEnvelope": {
+      "additionalProperties": false,
+      "description": "事件信封：总线上的唯一形状，WS 文本帧与事件历史查询共用。",
+      "properties": {
+        "actor": {
+          "type": "string"
+        },
+        "attempt_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "audited": {
+          "default": false,
+          "description": "ADR-0005 §8：是否已入 Kron 账本（未入账事件启动时批量补账）。",
+          "type": "boolean"
+        },
+        "id": {
+          "description": "宿主分配的事件 id（单调/唯一）。",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/EventKind"
+        },
+        "occurred_at": {
+          "description": "RFC3339 时间戳。",
+          "type": "string"
+        },
+        "payload": {
+          "default": null
+        },
+        "ticket_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "occurred_at",
+        "actor"
+      ],
+      "title": "EventEnvelope",
+      "type": "object"
+    },
+    "EventHistoryQuery": {
+      "additionalProperties": false,
+      "description": "事件历史查询（占位）。",
+      "properties": {
+        "kind": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EventKind"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "limit": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "since": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ticket_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "title": "EventHistoryQuery",
+      "type": "object"
+    },
+    "EventHistoryResponse": {
+      "additionalProperties": false,
+      "description": "事件历史响应（占位）。",
+      "properties": {
+        "events": {
+          "items": {
+            "$ref": "#/$defs/EventEnvelope"
+          },
+          "type": "array"
+        },
+        "truncated": {
+          "default": false,
+          "description": "是否因保留窗口被截断（ADR-0005 §10）。",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "events"
+      ],
+      "title": "EventHistoryResponse",
+      "type": "object"
+    },
+    "EventKind": {
+      "description": "事件种类闭集。",
+      "oneOf": [
+        {
+          "const": "dispatch",
+          "description": "派发：agent-runner 起了 attempt（审计双写关键事件）。",
+          "type": "string"
+        },
+        {
+          "const": "attempt_started",
+          "description": "attempt 生命周期占位：已启动。",
+          "type": "string"
+        },
+        {
+          "const": "agent_settled",
+          "description": "attempt 生命周期占位：判据阶梯判终态（`agent_settled`）。",
+          "type": "string"
+        },
+        {
+          "const": "attempt_finished",
+          "description": "attempt 生命周期占位：已结束（成功/失败/interrupted 之外的收尾）。",
+          "type": "string"
+        },
+        {
+          "const": "blocked",
+          "description": "一等事件：attempt 卡住，claim 保留，人类经 steer/follow_up 回应。",
+          "type": "string"
+        },
+        {
+          "const": "needs_attention",
+          "description": "一等事件：需要人类注意（插件隔离、取凭据失败等）。",
+          "type": "string"
+        },
+        {
+          "const": "steer",
+          "description": "steer：人类/编排器向运行中的 attempt 注入指令。",
+          "type": "string"
+        },
+        {
+          "const": "abort",
+          "description": "abort：探针/人工中止 attempt。",
+          "type": "string"
+        },
+        {
+          "const": "stall_kill",
+          "description": "stall 判杀：两口钟超时后的判杀（审计双写关键事件）。",
+          "type": "string"
+        },
+        {
+          "const": "merge",
+          "description": "merge：merge 服务执行了真正的 merge（审计双写关键事件）。",
+          "type": "string"
+        },
+        {
+          "const": "approval",
+          "description": "审批：人工闸门放行 merge 提议（审计双写关键事件）。",
+          "type": "string"
+        },
+        {
+          "const": "interrupted",
+          "description": "中断态：宿主重启时 running attempt 被标记的记账状态（第四终态）。",
+          "type": "string"
+        },
+        {
+          "const": "host_restarted",
+          "description": "宿主重启（审计双写关键事件；ADR-0005 §4 崩溃恢复）。",
+          "type": "string"
+        },
+        {
+          "const": "claim_acquired",
+          "description": "原子 claim 成功（CAS 语义）。",
+          "type": "string"
+        },
+        {
+          "const": "plugin_quarantined",
+          "description": "插件重试耗尽进入隔离（quarantined）。",
+          "type": "string"
+        },
+        {
+          "const": "plugin_restarted",
+          "description": "插件崩溃后按分级退避重启（ADR-0004 决策 4；进审计双写 → Kron escalation）。",
+          "type": "string"
+        },
+        {
+          "const": "notification_sent",
+          "description": "通知通道外发完成（HITL 前半程）。\n\n**保留种类，宿主侧无生产者**（code review P2-7）：GLOSSARY「通知通道」把外发\n实现整体放在宿主之外——宿主只有「开不开 + 转哪些关键事件」的配置持久面\n（[`crate::services::notifier`] 的通道配置），真正的 HTTP 外发由通知插件\n（如 `examples/http-notifier`）以契约客户端身份做。所以宿主零推送域知识，\n也就不该由宿主假装发这条事件；真发了它的是宿主外的通知器。\n\n它留在闭集里是为了让「外发完成」有一个契约位可订阅（编排器/面板据此知道\n人类被通知到了），**不是**因为宿主会发。谁实现外发，谁发这条事件。",
+          "type": "string"
+        }
+      ],
+      "title": "EventKind"
+    },
+    "HandshakeRequest": {
+      "additionalProperties": false,
+      "description": "握手请求。",
+      "properties": {
+        "client": {
+          "$ref": "#/$defs/ClientInfo"
+        },
+        "contract_version": {
+          "description": "客户端实现的契约版本，如 `1.0.0`。",
+          "type": "string"
+        }
+      },
+      "required": [
+        "contract_version",
+        "client"
+      ],
+      "title": "HandshakeRequest",
+      "type": "object"
+    },
+    "HandshakeResponse": {
+      "additionalProperties": false,
+      "description": "握手响应。",
+      "properties": {
+        "auth": {
+          "$ref": "#/$defs/AuthScheme"
+        },
+        "contract_version": {
+          "description": "宿主实际使用的契约版本。",
+          "type": "string"
+        },
+        "event_kinds": {
+          "description": "事件闭集：编排器据此穷举可订阅的事件种类。",
+          "items": {
+            "$ref": "#/$defs/EventKind"
+          },
+          "type": "array"
+        },
+        "host_version": {
+          "type": "string"
+        },
+        "services": {
+          "description": "v1 五服务（ADR-0001）。",
+          "items": {
+            "$ref": "#/$defs/ServiceName"
+          },
+          "type": "array"
+        },
+        "supported_contract_versions": {
+          "description": "宿主兼容的契约版本清单（当前只有 `[CONTRACT_VERSION]`）。",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "contract_version",
+        "supported_contract_versions",
+        "host_version",
+        "services",
+        "event_kinds",
+        "auth"
+      ],
+      "title": "HandshakeResponse",
+      "type": "object"
+    },
+    "IssueListResponse": {
+      "additionalProperties": false,
+      "description": "`GET /v1/tracker/issues` 的响应信封（占位）。",
+      "properties": {
+        "issues": {
+          "items": {
+            "$ref": "#/$defs/IssueView"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "issues"
+      ],
+      "title": "IssueListResponse",
+      "type": "object"
+    },
+    "IssueState": {
+      "description": "Issue 归一化状态（占位闭集，provider 语义关进 adapter 后收敛到这些值）。",
+      "oneOf": [
+        {
+          "enum": [
+            "open",
+            "in_progress",
+            "blocked",
+            "done"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "claimed",
+          "description": "已被排他 claim（assignee 即 claim）。",
+          "type": "string"
+        }
+      ],
+      "title": "IssueState"
+    },
+    "IssueView": {
+      "additionalProperties": false,
+      "description": "归一化后的票视图（面板与编排器读同一个视图——tracker 是总线）。\n\nblocking 边是**原语**（ADR-0001 决策 3）：服务只陈述「谁堵谁」，\ndispatchable / frontier 的计算归编排器。",
+      "properties": {
+        "assignee": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "blocked_by": {
+          "description": "堵住本票的票（provider 原生依赖的声明方向）。加法字段，老客户端忽略即可。",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "blocking": {
+          "description": "被本票堵住的票（反向，从全量边集推导）。加法字段。",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "issue_id": {
+          "type": "string"
+        },
+        "labels": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "state": {
+          "$ref": "#/$defs/IssueState"
+        },
+        "title": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "issue_id",
+        "title",
+        "state"
+      ],
+      "title": "IssueView",
+      "type": "object"
+    },
+    "LastKnownGoodInfo": {
+      "additionalProperties": false,
+      "description": "last-known-good 的落库信息（per-仓库，ADR-0005 §2/§6）。",
+      "properties": {
+        "updated_at": {
+          "description": "最近一次写入/更新时间（RFC3339）。",
+          "type": "string"
+        }
+      },
+      "required": [
+        "updated_at"
+      ],
+      "title": "LastKnownGoodInfo",
+      "type": "object"
+    },
+    "MappingListResponse": {
+      "additionalProperties": false,
+      "description": "`GET /v1/workspace/mappings` 的响应信封（占位）。",
+      "properties": {
+        "mappings": {
+          "items": {
+            "$ref": "#/$defs/WorkspaceMapping"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "mappings"
+      ],
+      "title": "MappingListResponse",
+      "type": "object"
+    },
+    "MergeProposal": {
+      "additionalProperties": false,
+      "description": "agent 的 merge 提议（提议即全部；执行归宿主）。",
+      "properties": {
+        "commit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ticket_id": {
+          "type": "string"
+        },
+        "worktree_branch": {
+          "description": "提议的源 worktree / 分支。",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ticket_id",
+        "worktree_branch"
+      ],
+      "title": "MergeProposal",
+      "type": "object"
+    },
+    "MergeProposalDetail": {
+      "additionalProperties": false,
+      "description": "提议详情（面板审阅队列呈现：记录字段 + diff，#25）。",
+      "properties": {
+        "diff": {
+          "description": "提议的 diff：集成分支 tip 与 worktree 分支 tip 的差异（面板呈现）。",
+          "type": "string"
+        },
+        "integration_branch": {
+          "type": "string"
+        },
+        "merge_commit": {
+          "description": "完成信号（`merged` 时必有）：集成分支上的 merge commit。",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "proposal_id": {
+          "type": "string"
+        },
+        "rejection_detail": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rejection_stage": {
+          "description": "拒收梯级（机械闸门或人工拒绝）。",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/MergeProposalState"
+        },
+        "ticket_id": {
+          "type": "string"
+        },
+        "worktree_branch": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "proposal_id",
+        "ticket_id",
+        "worktree_branch",
+        "integration_branch",
+        "state",
+        "message",
+        "diff"
+      ],
+      "title": "MergeProposalDetail",
+      "type": "object"
+    },
+    "MergeProposalListResponse": {
+      "additionalProperties": false,
+      "description": "审阅队列（面板主视图，#25）。",
+      "properties": {
+        "proposals": {
+          "items": {
+            "$ref": "#/$defs/MergeProposalDetail"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "proposals"
+      ],
+      "title": "MergeProposalListResponse",
+      "type": "object"
+    },
+    "MergeProposalResponse": {
+      "additionalProperties": false,
+      "description": "提议受理结果。",
+      "properties": {
+        "proposal_id": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/MergeProposalState"
+        }
+      },
+      "required": [
+        "proposal_id",
+        "state"
+      ],
+      "title": "MergeProposalResponse",
+      "type": "object"
+    },
+    "MergeProposalState": {
+      "description": "merge 提议状态（占位闭集）。",
+      "oneOf": [
+        {
+          "enum": [
+            "proposed",
+            "merged",
+            "rejected"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "validated",
+          "description": "机械闸门通过（worktree 干净、FF 可行、测试过）。",
+          "type": "string"
+        }
+      ],
+      "title": "MergeProposalState"
+    },
+    "MergeReviewDecision": {
+      "additionalProperties": false,
+      "description": "人工审阅决策（approve/reject 请求体；宿主管理 API，#25）。\n\n管理面操作经**管理 token**（ADR-0002 §1：管理面与契约边界分明），不是契约后门。",
+      "properties": {
+        "reason": {
+          "description": "拒绝理由（approve 时省略；reject 时可省略，宿主给通用理由）。",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reviewer": {
+          "description": "审阅人（面板操作者；进审批账）。",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reviewer"
+      ],
+      "title": "MergeReviewDecision",
+      "type": "object"
+    },
+    "MergeReviewResponse": {
+      "additionalProperties": false,
+      "description": "审阅操作结果（approve/reject 响应，#25）。",
+      "properties": {
+        "merge_commit": {
+          "description": "批准且机械闸门过 → merge commit（完成信号）；拒绝/机械拒收 → `None`。",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "proposal_id": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/MergeProposalState"
+        }
+      },
+      "required": [
+        "proposal_id",
+        "state"
+      ],
+      "title": "MergeReviewResponse",
+      "type": "object"
+    },
+    "NewEvent": {
+      "additionalProperties": false,
+      "description": "待发布事件：id / occurred_at / audited 由宿主的事件总线盖章。",
+      "properties": {
+        "actor": {
+          "description": "事件产生方（host / agent-runner / orchestrator / human / plugin…）。",
+          "type": "string"
+        },
+        "attempt_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/EventKind"
+        },
+        "payload": {
+          "default": null,
+          "description": "开放形状载荷；闭集只在 `kind` 上。"
+        },
+        "ticket_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "actor"
+      ],
+      "title": "NewEvent",
+      "type": "object"
+    },
+    "NotificationChannelConfig": {
+      "additionalProperties": false,
+      "description": "通知通道配置（per-仓库；宿主管理 API 的投影形状，migration v10 的存储面）。\n\n**宿主零推送域知识**：只有 `enabled`（总闸）+ `filter`（转哪些关键事件）+ `repo_id`\n+ `updated_at`。载体（URL/headers/body 模板/重试/限流）不住这里——那是插件侧自决\n（见模块文档）。",
+      "properties": {
+        "enabled": {
+          "description": "通道总闸：关掉后插件不外发任何事件（即便过滤集放行）。",
+          "type": "boolean"
+        },
+        "filter": {
+          "$ref": "#/$defs/NotifierFilter",
+          "description": "过滤集：四类关键事件各一个开关。"
+        },
+        "repo_id": {
+          "description": "被编排仓库 id（per-仓库 keyed，ADR-0005 §6）。",
+          "type": "string"
+        },
+        "updated_at": {
+          "description": "最近一次写入/更新时间（RFC3339；宿主张章）。",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo_id",
+        "enabled",
+        "filter",
+        "updated_at"
+      ],
+      "title": "NotificationChannelConfig",
+      "type": "object"
+    },
+    "NotificationChannelUpdate": {
+      "additionalProperties": false,
+      "description": "设置通知通道配置的请求体（宿主管理 API `POST /admin/notifier/channel/{repo_id}`）。\n\n只带 `enabled` + `filter`：`repo_id` 在路径上，`updated_at` 由宿主张章（调用方不能\n自定时间戳）。",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "filter": {
+          "$ref": "#/$defs/NotifierFilter"
+        }
+      },
+      "required": [
+        "enabled",
+        "filter"
+      ],
+      "title": "NotificationChannelUpdate",
+      "type": "object"
+    },
+    "NotifierFilter": {
+      "additionalProperties": false,
+      "description": "通知通道的过滤集：四类关键事件各一个显式开关（GLOSSARY「通知通道」默认过滤集）。\n\nwire 字符串为 snake_case，与 [`EventKind`] 的关键成员一一对应（`stall` → `stall_kill`、\n`merge_complete` → `merge`）。四个开关都是**必填**：缺席即形状不成立（与\n[`crate::overlay::OverlayEntry::temporary`] 同纪律，不猜默认）。",
+      "properties": {
+        "blocked": {
+          "description": "`blocked`：attempt 卡住、claim 保留（一等事件）。",
+          "type": "boolean"
+        },
+        "merge_complete": {
+          "description": "`merge_complete`：merge 服务执行了真正的 merge（[`EventKind::Merge`]；默认关）。",
+          "type": "boolean"
+        },
+        "needs_attention": {
+          "description": "`needs_attention`：需要人类注意（一等事件）。",
+          "type": "boolean"
+        },
+        "stall": {
+          "description": "`stall`：两口钟超时判杀（[`EventKind::StallKill`]）。",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "blocked",
+        "needs_attention",
+        "stall",
+        "merge_complete"
+      ],
+      "title": "NotifierFilter",
+      "type": "object"
+    },
+    "OverlayClearRequest": {
+      "additionalProperties": false,
+      "description": "清除覆盖层：给 `key` 清一条，不给清该仓库全部。",
+      "properties": {
+        "key": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OverlayKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "title": "OverlayClearRequest",
+      "type": "object"
+    },
+    "OverlayClearResponse": {
+      "additionalProperties": false,
+      "description": "清除结果（回报真清了哪几条）。",
+      "properties": {
+        "cleared": {
+          "items": {
+            "$ref": "#/$defs/OverlayKey"
+          },
+          "type": "array"
+        },
+        "repo_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo_id",
+        "cleared"
+      ],
+      "title": "OverlayClearResponse",
+      "type": "object"
+    },
+    "OverlayEntry": {
+      "additionalProperties": false,
+      "description": "一条覆盖层（查询 API 的清单项）。",
+      "properties": {
+        "key": {
+          "$ref": "#/$defs/OverlayKey"
+        },
+        "note": {
+          "description": "人读理由（谁为什么临时改这一格）。",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "repo_id": {
+          "type": "string"
+        },
+        "temporary": {
+          "description": "显式标记：**这是临时覆盖**（ADR-0002 §2）。必填——标记不允许缺席。",
+          "type": "boolean"
+        },
+        "updated_at": {
+          "description": "最近一次写入/更新时间（RFC3339）。",
+          "type": "string"
+        },
+        "value": true
+      },
+      "required": [
+        "repo_id",
+        "key",
+        "value",
+        "temporary",
+        "updated_at"
+      ],
+      "title": "OverlayEntry",
+      "type": "object"
+    },
+    "OverlayKey": {
+      "description": "覆盖层键闭集：workflow 配置六要素的可覆盖字段。\n\nwire 字符串与 [`OverlayKey::as_str`] 一致（`retry_backoff.` / `projection.`\n两级点号路径，直接对着配置字段念）。",
+      "enum": [
+        "max_concurrency",
+        "stall_threshold_secs",
+        "dispatch_labels",
+        "prompt_template",
+        "retry_backoff.max_retries",
+        "retry_backoff.base_delay_ms",
+        "retry_backoff.backoff_multiplier",
+        "projection.close_issue",
+        "projection.open_pr",
+        "projection.comment_merge_commit",
+        "projection.add_label"
+      ],
+      "title": "OverlayKey",
+      "type": "string"
+    },
+    "OverlaySetRequest": {
+      "additionalProperties": false,
+      "description": "设置一条覆盖层。",
+      "properties": {
+        "key": {
+          "$ref": "#/$defs/OverlayKey"
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "value": true
+      },
+      "required": [
+        "key",
+        "value"
+      ],
+      "title": "OverlaySetRequest",
+      "type": "object"
+    },
+    "OverlayStatus": {
+      "additionalProperties": false,
+      "description": "覆盖层生效视图（查询 API 的响应）：基线 + 覆盖层 + 生效值。",
+      "properties": {
+        "baseline": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkflowConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "被编排仓库的基线配置（workflow 当前配置 / LKG；从未装载则为 `None`）。"
+        },
+        "effective": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkflowConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "生效配置 = 基线 + 覆盖层。"
+        },
+        "overlay_applied": {
+          "description": "是否施加了覆盖层（`false` = 生效值就是基线）。",
+          "type": "boolean"
+        },
+        "overlays": {
+          "description": "覆盖层清单（每条都带临时标记）。",
+          "items": {
+            "$ref": "#/$defs/OverlayEntry"
+          },
+          "type": "array"
+        },
+        "repo_id": {
+          "type": "string"
+        },
+        "restore_prompt": {
+          "description": "重启后提示恢复基线（有覆盖层时就有这句话；`None` = 无需提示）。",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "repo_id",
+        "overlay_applied",
+        "overlays"
+      ],
+      "title": "OverlayStatus",
+      "type": "object"
+    },
+    "OverlayValueKind": {
+      "description": "覆盖层值的种类（闭集）：决定 JSON 形状与取值范围。",
+      "oneOf": [
+        {
+          "const": "count",
+          "description": "计数（>= 1 的整数）。",
+          "type": "string"
+        },
+        {
+          "const": "seconds",
+          "description": "秒数（>= 1 的整数；`retry_backoff.base_delay_ms` 是毫秒，同形状）。",
+          "type": "string"
+        },
+        {
+          "const": "labels",
+          "description": "标签清单（至少一个非空字符串）。",
+          "type": "string"
+        },
+        {
+          "const": "text",
+          "description": "文本（非空白）。",
+          "type": "string"
+        },
+        {
+          "const": "flag",
+          "description": "开关（布尔）。",
+          "type": "string"
+        }
+      ],
+      "title": "OverlayValueKind"
+    },
+    "PluginState": {
+      "description": "插件状态（占位闭集；`quarantined` 见 GLOSSARY「隔离」）。\n\n宿主侧插件监督状态（ticket #19 的 `plugin_state` 表）与宿主管理 API 的投影共用\n同一个闭集，所以它是插件管理面的单一源：`CHECK` 约束由 [`PluginState::ALL`] 生成。",
+      "oneOf": [
+        {
+          "enum": [
+            "running",
+            "stopped"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "quarantined",
+          "description": "重试耗尽后被隔离；宿主停止重启、发 `needs_attention`、面板可一键恢复。",
+          "type": "string"
+        }
+      ],
+      "title": "PluginState"
+    },
+    "PluginSummary": {
+      "additionalProperties": false,
+      "description": "插件摘要。",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "plugin_id": {
+          "type": "string"
+        },
+        "restarts": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "state": {
+          "$ref": "#/$defs/PluginState"
+        }
+      },
+      "required": [
+        "plugin_id",
+        "name",
+        "state"
+      ],
+      "title": "PluginSummary",
+      "type": "object"
+    },
+    "ProjectionSwitches": {
+      "description": "投影开关：宿主在 attempt 完成后机械执行的投影动作（ADR-0001 决策 2，归 #18）。\n全关 = 只产 merge commit，不关票/不开 PR/不评论/不打标签。缺字段默认 false（前向兼容）。",
+      "properties": {
+        "add_label": {
+          "default": false,
+          "description": "完成后打标签。",
+          "type": "boolean"
+        },
+        "close_issue": {
+          "default": false,
+          "description": "完成后关票。",
+          "type": "boolean"
+        },
+        "comment_merge_commit": {
+          "default": false,
+          "description": "完成后评论 merge commit 链接。",
+          "type": "boolean"
+        },
+        "open_pr": {
+          "default": false,
+          "description": "完成后开 PR。",
+          "type": "boolean"
+        }
+      },
+      "title": "ProjectionSwitches",
+      "type": "object"
+    },
+    "ReleaseOutcome": {
+      "description": "release 的结局投影（闭集）。\n\n只有两种**成功**投影：真的交还了、本来就没人持有。第三种可能（持票的是别人）\n不是结局而是闭集 `conflict` 错误——投影与错误不混在一个枚举里。",
+      "oneOf": [
+        {
+          "const": "released",
+          "description": "持有者本人释放：之后他人可 claim。",
+          "type": "string"
+        },
+        {
+          "const": "not_claimed",
+          "description": "无人持有：重复 release 的幂等空操作（不报错，也不写新历史）。",
+          "type": "string"
+        }
+      ],
+      "title": "ReleaseOutcome"
+    },
+    "ReleaseRequest": {
+      "additionalProperties": false,
+      "description": "release 请求：交还排他所有权（GLOSSARY：claim 是票据状态，不是技术锁）。\n\n与 claim 同形：`assignee` 是**交还者**。持着票的是别人 → 闭集 `conflict`\n（409，`details.holder` 指名当前持有者）；无人持有 → 幂等空操作\n（[`ReleaseOutcome::NotClaimed`）；票不在视图里 → 闭集 `not_found`。",
+      "properties": {
+        "assignee": {
+          "type": "string"
+        },
+        "issue_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "issue_id",
+        "assignee"
+      ],
+      "title": "ReleaseRequest",
+      "type": "object"
+    },
+    "ReleaseResponse": {
+      "additionalProperties": false,
+      "description": "release 结果：票 + 结局投影。`holder` 不进契约——release 的目的状态就是无人持有。",
+      "properties": {
+        "issue_id": {
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/ReleaseOutcome"
+        }
+      },
+      "required": [
+        "issue_id",
+        "outcome"
+      ],
+      "title": "ReleaseResponse",
+      "type": "object"
+    },
+    "RetryBackoff": {
+      "description": "分级指数退避（编排器重试策略；整数倍以保持 `Eq`）。缺字段用默认值（前向兼容）。",
+      "properties": {
+        "backoff_multiplier": {
+          "default": 1,
+          "description": "退避倍率（>= 1；2 = 每次翻倍）。",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "base_delay_ms": {
+          "default": 0,
+          "description": "基础延迟（毫秒；启用重试时 >= 1）。",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_retries": {
+          "default": 0,
+          "description": "最大重试次数（0 = 不重试）。",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "title": "RetryBackoff",
+      "type": "object"
+    },
+    "ServiceControlStatus": {
+      "additionalProperties": false,
+      "description": "服务启停控制面的当前状态（`GET /admin/services` 响应；五服务俱全）。",
+      "properties": {
+        "services": {
+          "items": {
+            "$ref": "#/$defs/ServiceControlStatusEntry"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "services"
+      ],
+      "title": "ServiceControlStatus",
+      "type": "object"
+    },
+    "ServiceControlStatusEntry": {
+      "additionalProperties": false,
+      "description": "单个服务的启停状态（宿主管理面投影，ticket #23）。",
+      "properties": {
+        "service": {
+          "$ref": "#/$defs/ServiceName"
+        },
+        "state": {
+          "$ref": "#/$defs/ServiceRunState"
+        },
+        "updated_at": {
+          "description": "最近一次启停切换时间（RFC3339；从未切过则为 `None`）。",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "service",
+        "state"
+      ],
+      "title": "ServiceControlStatusEntry",
+      "type": "object"
+    },
+    "ServiceName": {
+      "description": "v1 五服务（闭集）。",
+      "oneOf": [
+        {
+          "const": "tracker",
+          "description": "Tracker 服务：归一化 Issue 模型 + 原子 claim。",
+          "type": "string"
+        },
+        {
+          "const": "agent_runner",
+          "description": "Agent-Runner：统一接口派发与管理 agent。",
+          "type": "string"
+        },
+        {
+          "const": "merge",
+          "description": "Merge 服务：宿主侧确定性合并执行者。",
+          "type": "string"
+        },
+        {
+          "const": "workspace",
+          "description": "Workspace 服务：spec ↔ 集成分支 ↔ worktrees 映射。",
+          "type": "string"
+        },
+        {
+          "const": "events",
+          "description": "事件总线：统一事件回流面。",
+          "type": "string"
+        }
+      ],
+      "title": "ServiceName"
+    },
+    "ServiceRunState": {
+      "description": "服务的运行态（宿主管理面「服务启停」，ticket #23）：二值闭集。\n\n与 [`PluginState`] 三态闭集**不同**：服务是宿主自身的五服务（ADR-0001），没有\nquarantined 语义（那是插件进程崩溃重试耗尽的状态，GLOSSARY「隔离」）。",
+      "oneOf": [
+        {
+          "const": "running",
+          "description": "运行中（默认；宿主启动即五服务俱在）。",
+          "type": "string"
+        },
+        {
+          "const": "stopped",
+          "description": "被人经管理面停机（易失宿主持有开关，重启后回到 running）。",
+          "type": "string"
+        }
+      ],
+      "title": "ServiceRunState"
+    },
+    "SteerRequest": {
+      "additionalProperties": false,
+      "description": "steer：向运行中的 attempt 注入指令（GLOSSARY：人类经 steer/follow_up 回应）。",
+      "properties": {
+        "attempt_id": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "attempt_id",
+        "message"
+      ],
+      "title": "SteerRequest",
+      "type": "object"
+    },
+    "TickControlRequest": {
+      "additionalProperties": false,
+      "description": "暂停 / 恢复请求（理由可选）。",
+      "properties": {
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "title": "TickControlRequest",
+      "type": "object"
+    },
+    "TickControlStatus": {
+      "additionalProperties": false,
+      "description": "tick 控制面的当前状态（查询 API 的响应）。",
+      "properties": {
+        "actor": {
+          "description": "谁按的（`panel` / `orchestrator` / 人类经面板）。",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "description": "暂停理由（人读；编排器/面板可照抄进自己的日志）。",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/TickState"
+        },
+        "updated_at": {
+          "description": "最近一次切换时间（RFC3339；从未切过则为 `None`）。",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "title": "TickControlStatus",
+      "type": "object"
+    },
+    "TickState": {
+      "description": "tick 状态（闭集：二值，没有第三种「半暂停」）。",
+      "oneOf": [
+        {
+          "const": "running",
+          "description": "正常：编排器循环每 tick 该派发就派发。",
+          "type": "string"
+        },
+        {
+          "const": "paused",
+          "description": "暂停：编排器循环读到它就跳过本 tick（不派发、不回收、只等待）。",
+          "type": "string"
+        }
+      ],
+      "title": "TickState"
+    },
+    "TrackerProviderConfig": {
+      "additionalProperties": false,
+      "description": "tracker provider / adapter 配置（宿主管理面视图，ticket #23）。\n\nGLOSSARY「Tracker 服务」：provider 语义（GitHub/Gogs/native）关进 adapter，服务与契约不动。\nprovider 名是 **host-private**（ADR-0005 §5）——它进宿主管理 API 的投影，**不进契约路由**。\nv1 唯一 adapter 是 `native`；换 provider = 加一个 `TrackerAdapter` 实现。",
+      "properties": {
+        "known_providers": {
+          "description": "可选 adapter 清单（面板据此渲染选择器；host-private）。",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "provider": {
+          "description": "当前选中的 provider / adapter 名（未设置时默认 `native`）。",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "known_providers"
+      ],
+      "title": "TrackerProviderConfig",
+      "type": "object"
+    },
+    "TrackerProviderSelection": {
+      "additionalProperties": false,
+      "description": "设置 tracker provider / adapter 的请求体（ticket #23）。",
+      "properties": {
+        "provider": {
+          "description": "要切换到的 provider / adapter 名（未知名 → 闭集 `invalid_request`）。",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider"
+      ],
+      "title": "TrackerProviderSelection",
+      "type": "object"
+    },
+    "WorkflowConfig": {
+      "description": "被编排仓库的 workflow 配置（`.farm/workflow.json` 解析后的形状）。\n\n前向兼容：未知字段被忽略（不因仓库用了更新版字段名而判非法）；但四个核心字段\n（dispatch_labels / max_concurrency / stall_threshold_secs / prompt_template）缺失即解析\n失败。合法性由 `farm-core` 的语义校验判定（缺一即回退 LKG，绝不 panic）。",
+      "properties": {
+        "dispatch_labels": {
+          "description": "dispatchable 判定标签：至少一个（否则没有票可派发）。",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "max_concurrency": {
+          "description": "并发配额：同时派发的 attempt 上限（>= 1）。",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "projection": {
+          "$ref": "#/$defs/ProjectionSwitches",
+          "default": {
+            "add_label": false,
+            "close_issue": false,
+            "comment_merge_commit": false,
+            "open_pr": false
+          },
+          "description": "投影开关：attempt 完成后宿主机械执行的投影动作（归 #18 merge 服务；可省略）。"
+        },
+        "prompt_template": {
+          "description": "派发 prompt 模板（占位符由编排器展开，如 `{{ticket_id}}`）。",
+          "type": "string"
+        },
+        "retry_backoff": {
+          "$ref": "#/$defs/RetryBackoff",
+          "default": {
+            "backoff_multiplier": 1,
+            "base_delay_ms": 0,
+            "max_retries": 0
+          },
+          "description": "重试退避策略（可省略，用默认值）。"
+        },
+        "stall_threshold_secs": {
+          "description": "stall 阈值（秒）：attempt 静默超过它即判杀（>= 1）。",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "dispatch_labels",
+        "max_concurrency",
+        "stall_threshold_secs",
+        "prompt_template"
+      ],
+      "title": "WorkflowConfig",
+      "type": "object"
+    },
+    "WorkflowConfigStatus": {
+      "additionalProperties": false,
+      "description": "查询 API 的响应：某被编排仓库的当前生效配置 + LKG 状态。",
+      "properties": {
+        "effective": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkflowConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "当前生效配置；`None` = 尚无生效配置（首次即非法，拒绝编排）。"
+        },
+        "last_alert": {
+          "description": "最近一次配置告警的原因（非法回退/拒绝时）。",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_known_good": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LastKnownGoodInfo"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "落库的 last-known-good 信息（重启后仍可引导）。"
+        },
+        "loaded_at": {
+          "description": "本次生效配置的装载时间（RFC3339）。",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "repo_id": {
+          "type": "string"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EffectiveSource"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "生效配置来源。"
+        }
+      },
+      "required": [
+        "repo_id"
+      ],
+      "title": "WorkflowConfigStatus",
+      "type": "object"
+    },
+    "WorkspaceMapping": {
+      "additionalProperties": false,
+      "description": "spec ↔ 集成分支 ↔ worktrees 映射（worktree 半写：映射先写、worktree 后建）。",
+      "properties": {
+        "integration_branch": {
+          "type": "string"
+        },
+        "spec_id": {
+          "type": "string"
+        },
+        "worktrees": {
+          "items": {
+            "$ref": "#/$defs/WorktreeRef"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "spec_id",
+        "integration_branch"
+      ],
+      "title": "WorkspaceMapping",
+      "type": "object"
+    },
+    "WorktreeEstablishRequest": {
+      "additionalProperties": false,
+      "description": "建立 ticket worktree 的请求（`POST /v1/workspace/worktrees`，ticket #26 加法接通）。\n\nGLOSSARY「Workspace 服务」负责 worktree 的创建；编排器以契约客户端身份触发它\n（write-ahead 映射先落、`git worktree add` 后建）。路径用字符串（契约面只过 JSON），\n由宿主翻译成内部 `EstablishRequest`。这是**加法**契约面：既有的 `GET /v1/workspace/mappings`\n只读投影不变，本条只补「编排器可委托建 worktree」这一个原语——没有它，契约客户端\n无法驱动整链（claim 之后、dispatch 之前无处建 worktree）。",
+      "properties": {
+        "integration_branch": {
+          "type": "string"
+        },
+        "repo_path": {
+          "description": "源仓库路径（`git worktree add -C` 的目标）。",
+          "type": "string"
+        },
+        "spec_id": {
+          "type": "string"
+        },
+        "start_point": {
+          "description": "建分支的起点（commit/branch）；缺省基于 HEAD。",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ticket_id": {
+          "type": "string"
+        },
+        "worktree_branch": {
+          "description": "worktree 分支名（不存在则从 `start_point` 新建）。",
+          "type": "string"
+        },
+        "worktree_path": {
+          "description": "要建的 worktree 目录路径。",
+          "type": "string"
+        }
+      },
+      "required": [
+        "spec_id",
+        "integration_branch",
+        "ticket_id",
+        "repo_path",
+        "worktree_path",
+        "worktree_branch"
+      ],
+      "title": "WorktreeEstablishRequest",
+      "type": "object"
+    },
+    "WorktreeRef": {
+      "additionalProperties": false,
+      "description": "worktree 引用。",
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/WorktreeState"
+        },
+        "ticket_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ticket_id",
+        "path",
+        "branch",
+        "state"
+      ],
+      "title": "WorktreeRef",
+      "type": "object"
+    },
+    "WorktreeState": {
+      "description": "worktree 状态（占位闭集）。",
+      "oneOf": [
+        {
+          "enum": [
+            "creating",
+            "ready",
+            "removed"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "broken",
+          "description": "映射在而目录缺/损（ADR-0005 §9 启动对账标记）。",
+          "type": "string"
+        }
+      ],
+      "title": "WorktreeState"
+    },
+    "WsHello": {
+      "additionalProperties": false,
+      "description": "WS 首帧：订阅建立后宿主立即回送的自描述（契约版本 + 事件闭集）。",
+      "properties": {
+        "contract_version": {
+          "type": "string"
+        },
+        "event_kinds": {
+          "items": {
+            "$ref": "#/$defs/EventKind"
+          },
+          "type": "array"
+        },
+        "subscription_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "description": "固定为 `hello`，与错误信封（有 `code`）区分。",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "contract_version",
+        "event_kinds"
+      ],
+      "title": "WsHello",
+      "type": "object"
+    }
+  },
+  "$id": "https://raw.githubusercontent.com/JoeWest9966/Farm/main/docs/contract/schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "GENERATED from farm-sdk types (single source of truth). Do not edit by hand; regenerate with `cargo run -p farm-sdk --example gen_contract_docs`.",
+  "properties": {
+    "adminRoutes": {
+      "description": "宿主管理 API 路由（独立前缀 /admin，接口位）",
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "method": {
+            "enum": [
+              "GET",
+              "POST"
+            ],
+            "type": "string"
+          },
+          "path": {
+            "pattern": "^/admin/",
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "method",
+          "path",
+          "summary"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "auth": {
+      "$ref": "#/$defs/AuthScheme"
+    },
+    "contractVersion": {
+      "const": "1.0.0"
+    },
+    "errorCodes": {
+      "description": "闭集错误码：HTTP 与 WS 共用同一信封",
+      "items": {
+        "$ref": "#/$defs/ErrorCode"
+      },
+      "type": "array"
+    },
+    "errorEnvelope": {
+      "$ref": "#/$defs/ContractError"
+    },
+    "eventEnvelope": {
+      "$ref": "#/$defs/EventEnvelope"
+    },
+    "eventKinds": {
+      "description": "事件闭集（加法演进）",
+      "items": {
+        "$ref": "#/$defs/EventKind"
+      },
+      "type": "array"
+    },
+    "handshake": {
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "$ref": "#/$defs/ContractError"
+        },
+        "method": {
+          "const": "POST"
+        },
+        "path": {
+          "const": "/handshake"
+        },
+        "request": {
+          "$ref": "#/$defs/HandshakeRequest"
+        },
+        "response": {
+          "$ref": "#/$defs/HandshakeResponse"
+        }
+      },
+      "required": [
+        "method",
+        "path",
+        "request",
+        "response",
+        "error"
+      ],
+      "type": "object"
+    },
+    "newEvent": {
+      "$ref": "#/$defs/NewEvent"
+    },
+    "routes": {
+      "description": "编排器契约路由（占位形状，宿主按本表挂路由）",
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "method": {
+            "enum": [
+              "GET",
+              "POST"
+            ],
+            "type": "string"
+          },
+          "path": {
+            "pattern": "^/v1/",
+            "type": "string"
+          },
+          "service": {
+            "$ref": "#/$defs/ServiceName"
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "service",
+          "method",
+          "path",
+          "summary"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "services": {
+      "description": "v1 五服务（ADR-0001）",
+      "items": {
+        "$ref": "#/$defs/ServiceName"
+      },
+      "type": "array"
+    },
+    "wsHello": {
+      "$ref": "#/$defs/WsHello"
+    }
+  },
+  "required": [
+    "contractVersion",
+    "handshake",
+    "auth",
+    "services",
+    "routes",
+    "adminRoutes",
+    "errorCodes",
+    "eventKinds"
+  ],
+  "title": "Farm orchestrator contract",
+  "type": "object",
+  "x-farm-contract-major": 1,
+  "x-farm-contract-version": "1.0.0",
+  "x-farm-generated": true,
+  "x-farm-generator": "cargo run -p farm-sdk --example gen_contract_docs"
+}

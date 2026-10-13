@@ -1,0 +1,54 @@
+[package]
+name = "farm-core"
+description = "Farm 宿主核心：tokio runtime、共享 AppState、SQLite 私有存储（rusqlite + WAL）与版本化顺序 migration runner、内存事件总线原语。"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+farm-sdk = { path = "../farm-sdk" }
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["process", "io-util"] }
+rusqlite.workspace = true
+getrandom.workspace = true
+time.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+# 只为「配置回退要留一声告警」的日志捕获测试（code review P2-12）而引入；
+# 版本已在 workspace 解析过，不新增锁定条目。
+tracing-subscriber.workspace = true
+
+# fake pi RPC 测试替身（ticket #16）：说文档化 1.0.2 wire protocol 的 JSONL 进程。
+# 集成测试经 `CARGO_BIN_EXE_fake-pi` 拿到它的绝对路径。
+[[bin]]
+name = "fake-pi"
+path = "src/bin/fake-pi.rs"
+
+# fake nw Warehouse CLI 测试替身（ticket #17 凭据过路财神）：`nw key get` 说 JSON envelope。
+[[bin]]
+name = "fake-nw"
+path = "src/bin/fake-nw.rs"
+
+# fake ledger 测试替身（ticket #20）：顶替 Kron `ledger record` 子进程，记 NDJSON 进日志。
+[[bin]]
+name = "fake-ledger"
+path = "src/bin/fake-ledger.rs"
+
+# fake plugin 测试替身（#19）：进程级 IPC 插件的插件侧替身，场景全经 env 注入
+# （`crash-loop` / `crash-once` / `silent` / `hang` / `normal`）。
+[[bin]]
+name = "fake-plugin"
+path = "src/bin/fake-plugin.rs"
+
+# 带**真 tokio runtime** 的插件替身（#19 的冻结覆盖缺口，code review P1-open）：
+# fake-plugin 是纯 std 的，真实插件（plugin-skeleton / http-notifier）都跑自己的
+# runtime；宿主经 `tokio::process` 拉起它们时在本沙箱会冻住，这一角要能被测到。
+[[bin]]
+name = "tokio-plugin"
+path = "src/bin/tokio-plugin.rs"
